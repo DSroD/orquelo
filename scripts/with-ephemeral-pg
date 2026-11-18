@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Runs "$@" against a throwaway Postgres (TCP + SCRAM, like CNPG).
+set -euo pipefail
+base="${TMPDIR:-/tmp}"
+dir="$(mktemp -d "${base%/}/orquelo-pg.XXXXXX")"
+port=54329
+stop() { pg_ctl -D "$dir/pg" -m immediate stop >/dev/null 2>&1 || true; rm -rf "$dir"; }
+trap stop EXIT
+
+echo orquelo > "$dir/pw"
+initdb -D "$dir/pg" -U orquelo --encoding=UTF8 --locale=C --auth=scram-sha-256 --pwfile="$dir/pw" >/dev/null
+pg_ctl -D "$dir/pg" -w -l "$dir/pg.log" start \
+  -o "-k $dir -p $port -c listen_addresses=127.0.0.1" >/dev/null
+PGPASSWORD=orquelo createdb -h 127.0.0.1 -p "$port" -U orquelo orquelo_test
+
+export PGPASSWORD=orquelo
+export EPHEMERAL_PG_LOG="$dir/pg.log" # deleted on exit; copy it if you need it
+export TEST_DATABASE_URL="postgresql://orquelo:orquelo@127.0.0.1:$port/orquelo_test"
+"$@"

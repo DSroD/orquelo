@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Creates the database named by DATABASE_URL (a local one only) when it does not exist yet; never drops or
+# resets anything. Dev scripts run it so a second database (orquelo_core) needs no manual setup.
+# Needs psql; when the server cannot be reached it only warns, and the app reports the real error itself.
+set -euo pipefail
+url=${DATABASE_URL:-}
+re='^(postgres(ql)?://[^/]*@(localhost|127\.0\.0\.1)(:[0-9]+)?)/([A-Za-z0-9_]+)(\?.*)?$'
+[[ $url =~ $re ]] || { echo "ensure-db: DATABASE_URL is not a local database URL, skipping" >&2; exit 0; }
+base=${BASH_REMATCH[1]}; db=${BASH_REMATCH[5]}
+exists=$(psql "$base/postgres" -qtAc "SELECT 1 FROM pg_database WHERE datname='$db'" 2>/dev/null) || {
+  echo "ensure-db: cannot reach Postgres, skipping" >&2; exit 0; }
+[ -n "$exists" ] || { psql "$base/postgres" -q -c "CREATE DATABASE \"$db\"" && echo "created database $db"; }

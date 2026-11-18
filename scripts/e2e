@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# Playwright user stories (e2e/) against a throwaway Postgres and a local core server on E2E_PORT.
+# Run inside the devShell: nix develop -c scripts/e2e [playwright args]
+# Never touches the dev stack (web/dist, 8090/8091, 5434): the SPA is built into a temp dir.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+[ -n "${TEST_DATABASE_URL:-}" ] || exec scripts/with-ephemeral-pg "$0" "$@"
+
+P="${E2E_PORT:-18181}"
+B="http://localhost:$P"
+curl -s "$B" >/dev/null 2>&1 && { echo "port $P is taken (set E2E_PORT)" >&2; exit 2; }
+
+tmp="$(mktemp -d "${TMPDIR:-/tmp}/orquelo-e2e.XXXXXX")"
+pid=""
+cleanup() {
+  rc=$?
+  [ -z "$pid" ] || kill "$pid" 2>/dev/null || true
+  [ "$rc" = 0 ] || tail -n 40 "$tmp/server.log" 2>/dev/null >&2 || true
+  rm -rf "$tmp"
+}
+trap cleanup EXIT INT TERM
+
+wait_for() { # url
+  for _ in $(seq 60); do curl -fsS "$1" >/dev/null 2>&1 && return 0; sleep 0.5; done
+  echo "timed out waiting for $1" >&2; return 1
+}
+
+(cd web && npm install --no-audit --no-fund && npm run build -- --outDir "$tmp/static" --emptyOutDir)
+(cd e2e && npm install --no-audit --no-fund)
+raco make server/main.rkt
+
+MAX_UPLOAD=2097152 QUOTA=3145728
+env DATABASE_URL="$TEST_DATABASE_URL" PUBLIC_BASE_URL="$B" PORT="$P" STATIC_DIR="$tmp/static" UPLOAD_DIR="$tmp/data" \
+    SESSION_SECRET="$(openssl rand -base64 48)" MAX_UPLOAD_BYTES=$MAX_UPLOAD STORAGE_QUOTA_BYTES=$QUOTA \
+    racket server/main.rkt > "$tmp/server.log" 2>&1 &
+pid=$!
+wait_for "$B/healthz"
+
+export E2E_BASE_URL="$B" E2E_ORQUELO_MAIN="$PWD/server/main.rkt" E2E_DATABASE_URL="$TEST_DATABASE_URL" \
+       E2E_MAX_UPLOAD_BYTES=$MAX_UPLOAD E2E_STORAGE_QUOTA_BYTES=$QUOTA
+cd e2e
+npx playwright test "$@"

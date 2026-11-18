@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# Tests scripts/lint-migrations in a throwaway git repository.
+# LINT overrides the path of the script under test.
+set -euo pipefail
+lint=${LINT:-$(cd "$(dirname "$0")" && pwd)/lint-migrations}
+tmp=$(mktemp -d); trap 'rm -rf "$tmp" "$tmp.err"' EXIT
+cd "$tmp"
+git init -q -b main .
+git config user.name t; git config user.email t@example.org; git config commit.gpgsign false
+mkdir m
+echo 'SELECT 1;' > m/20260101000000_init.sql
+echo 'SELECT 2;' > m/20260201000000_two.sql
+git add -A; git commit -qm base
+
+failures=0
+# expect STATUS LABEL: runs the lint against main and compares its outcome
+expect() {
+  local want=$1 label=$2 got=0
+  bash "$lint" m main >/dev/null 2>"$tmp.err" || got=$?
+  if { [ "$want" = pass ] && [ "$got" -eq 0 ]; } || { [ "$want" = fail ] && [ "$got" -eq 1 ]; }; then
+    echo "ok   $label"
+  else
+    echo "FAIL $label (exit $got, wanted $want)"; cat "$tmp.err"; failures=$((failures + 1))
+  fi
+  git reset -q --hard main; git clean -qfd
+}
+
+expect pass "clean tree"
+echo 'SELECT 3;' > m/20260301000000_three.sql;                     expect pass "newer new file"
+echo 'SELECT 9;' >> m/20260201000000_two.sql;                      expect fail "edited migration"
+rm m/20260101000000_init.sql;                                      expect fail "deleted migration"
+git mv m/20260101000000_init.sql m/20260101000000_renamed.sql;     expect fail "renamed migration"
+echo 'SELECT 3;' > m/20260115000000_old.sql;                       expect fail "back-dated new file"
+echo 'SELECT 3;' > m/20260201000000_same.sql;                      expect fail "same timestamp as newest"
+echo 'SELECT 3;' > m/003_bad.sql;                                  expect fail "bad name"
+echo 'SELECT 3;' > m/20260301000000_a.sql
+echo 'SELECT 4;' > m/20260301000000_b.sql;                         expect fail "duplicate new timestamps"
+[ "$failures" -eq 0 ]

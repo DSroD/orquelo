@@ -1,0 +1,51 @@
+{
+  "session": {
+    "code": "abcde23456",
+    "label": "Class A"
+  },
+  "presentation": {
+    "id": 7,
+    "title": "Intro to HtDP"
+  },
+  "poll": {
+    "run_id": 12,
+    "question": "Which are pure functions?",
+    "kind": "multi",
+    "open": true,
+    "options": [
+      {
+        "id": 101,
+        "label": "square",
+        "exclusive": false
+      },
+      {
+        "id": 102,
+        "label": "random",
+        "exclusive": false
+      },
+      {
+        "id": 103,
+        "label": "string-append",
+        "exclusive": false
+      }
+    ]
+  },
+  "my_vote": [
+    101,
+    103
+  ],
+  "qa": {
+    "enabled": true,
+    "open": true,
+    "questions": [
+      {
+        "id": 41,
+        "text": "Why is random not a pure function?",
+        "status": "pending",
+        "created_at": "2026-11-15T10:22:00.000Z",
+        "updated_at": "2026-11-15T10:22:00.000Z"
+      }
+    ],
+    "started": true
+  }
+}

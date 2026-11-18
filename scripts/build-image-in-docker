@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Builds packages.<linux>.<attr> (default: image) inside a nixos/nix container (no nix linux-builder needed)
+# and `docker load`s it. Usage: scripts/build-image-in-docker [system [attr]]   (default: native Linux arch, image)
+set -euo pipefail
+cd "$(dirname "$0")/.."
+case "$(uname -m)" in arm64|aarch64) arch=aarch64 ;; *) arch=x86_64 ;; esac
+system="${1:-$arch-linux}"
+attr="${2:-image}"
+# Source is streamed in over stdin (bind mounts from /private/tmp are unreliable on Colima).
+git ls-files -z --cached --others --exclude-standard | xargs -0 tar -cf - \
+| docker run --rm -i -v orquelo-nix-store:/nix nixos/nix sh -c '
+    set -e
+    mkdir -p /src && tar -xf - -C /src && cd /src
+    git init -q && git add -A >/dev/null 2>&1 || true
+    export NIX_CONFIG="experimental-features = nix-command flakes"
+    nix build ".#packages.'"$system"'."'"$attr"'"" -L -o /tmp/image >&2
+    cat "$(readlink -f /tmp/image)"
+' | docker load

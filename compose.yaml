@@ -1,0 +1,38 @@
+# Orquelo with Postgres, for self-hosting. Put SESSION_SECRET (openssl rand -base64 48) and PUBLIC_BASE_URL
+# in a .env file next to this one, then: docker compose up -d
+# First account: docker compose exec -T orquelo /bin/orquelo user add you@example.org < password.txt
+services:
+  db:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: orquelo
+      POSTGRES_PASSWORD: orquelo
+      POSTGRES_DB: orquelo
+    volumes:
+      - db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "orquelo"]
+      interval: 2s
+      retries: 30
+
+  orquelo:
+    image: ${ORQUELO_IMAGE:-ghcr.io/dsrod/orquelo:latest}
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    environment:
+      DATABASE_URL: postgresql://orquelo:orquelo@db:5432/orquelo
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8080}
+      SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in .env}
+      UPLOAD_DIR: /data
+      # Behind a reverse proxy that sets X-Forwarded-For: TRUST_PROXY: "1"
+    volumes:
+      - data:/data
+
+volumes:
+  db:
+  data:

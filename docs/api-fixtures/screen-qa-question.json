@@ -1,0 +1,23 @@
+{
+  "session": {
+    "code": "abcde23456",
+    "label": "Class A"
+  },
+  "presentation": {
+    "id": 7,
+    "title": "Intro to HtDP",
+    "page_count": 42
+  },
+  "join_url": "https://orquelo.com/7/abcde23456",
+  "stage": {
+    "slide": 5,
+    "overlay": {
+      "type": "qa",
+      "question": {
+        "id": 41,
+        "text": "Why is random not a pure function?"
+      },
+      "open": true
+    }
+  }
+}

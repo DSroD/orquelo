@@ -1,0 +1,3 @@
+#lang info
+;; Lets an edition built on core require this directory as the `orquelo` collection: orquelo/config, ...
+(define collection "orquelo")

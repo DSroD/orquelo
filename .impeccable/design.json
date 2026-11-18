@@ -1,0 +1,600 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-16T16:00:00Z",
+  "title": "Design System: Orquelo",
+  "extensions": {
+    "colorMeta": {
+      "ground": {
+        "role": "neutral",
+        "displayName": "Green-Black Ground (dark)",
+        "canonical": "#0b130e",
+        "tonalRamp": [
+          "oklch(15% 0.02 155)",
+          "oklch(26% 0.02 155)",
+          "oklch(37% 0.02 155)",
+          "oklch(48% 0.02 155)",
+          "oklch(59% 0.02 155)",
+          "oklch(70% 0.02 155)",
+          "oklch(82% 0.02 155)",
+          "oklch(95% 0.02 155)"
+        ]
+      },
+      "ground-light": {
+        "role": "neutral",
+        "displayName": "Green-Black Ground (light)",
+        "canonical": "#e8eeea",
+        "tonalRamp": [
+          "oklch(15% 0.02 155)",
+          "oklch(26% 0.02 155)",
+          "oklch(37% 0.02 155)",
+          "oklch(48% 0.02 155)",
+          "oklch(59% 0.02 155)",
+          "oklch(70% 0.02 155)",
+          "oklch(82% 0.02 155)",
+          "oklch(95% 0.02 155)"
+        ]
+      },
+      "panel": {
+        "role": "neutral",
+        "displayName": "Panel (dark)",
+        "canonical": "#131f17",
+        "tonalRamp": [
+          "oklch(15% 0.02 155)",
+          "oklch(26% 0.02 155)",
+          "oklch(37% 0.02 155)",
+          "oklch(48% 0.02 155)",
+          "oklch(59% 0.02 155)",
+          "oklch(70% 0.02 155)",
+          "oklch(82% 0.02 155)",
+          "oklch(95% 0.02 155)"
+        ]
+      },
+      "panel-light": {
+        "role": "neutral",
+        "displayName": "Panel (light)",
+        "canonical": "#dae3de",
+        "tonalRamp": [
+          "oklch(15% 0.02 155)",
+          "oklch(26% 0.02 155)",
+          "oklch(37% 0.02 155)",
+          "oklch(48% 0.02 155)",
+          "oklch(59% 0.02 155)",
+          "oklch(70% 0.02 155)",
+          "oklch(82% 0.02 155)",
+          "oklch(95% 0.02 155)"
+        ]
+      },
+      "rule-line": {
+        "role": "neutral",
+        "displayName": "Rule Line (dark)",
+        "canonical": "#2a3d30",
+        "tonalRamp": [
+          "oklch(15% 0.03 155)",
+          "oklch(26% 0.03 155)",
+          "oklch(37% 0.03 155)",
+          "oklch(48% 0.03 155)",
+          "oklch(59% 0.03 155)",
+          "oklch(70% 0.03 155)",
+          "oklch(82% 0.03 155)",
+          "oklch(95% 0.03 155)"
+        ]
+      },
+      "rule-line-light": {
+        "role": "neutral",
+        "displayName": "Rule Line (light)",
+        "canonical": "#a9b9af",
+        "tonalRamp": [
+          "oklch(15% 0.03 155)",
+          "oklch(26% 0.03 155)",
+          "oklch(37% 0.03 155)",
+          "oklch(48% 0.03 155)",
+          "oklch(59% 0.03 155)",
+          "oklch(70% 0.03 155)",
+          "oklch(82% 0.03 155)",
+          "oklch(95% 0.03 155)"
+        ]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Ink (dark)",
+        "canonical": "#d8e5d4",
+        "tonalRamp": [
+          "oklch(15% 0.03 140)",
+          "oklch(26% 0.03 140)",
+          "oklch(37% 0.03 140)",
+          "oklch(48% 0.03 140)",
+          "oklch(59% 0.03 140)",
+          "oklch(70% 0.03 140)",
+          "oklch(82% 0.03 140)",
+          "oklch(95% 0.03 140)"
+        ]
+      },
+      "ink-light": {
+        "role": "neutral",
+        "displayName": "Ink (light)",
+        "canonical": "#14201a",
+        "tonalRamp": [
+          "oklch(15% 0.03 140)",
+          "oklch(26% 0.03 140)",
+          "oklch(37% 0.03 140)",
+          "oklch(48% 0.03 140)",
+          "oklch(59% 0.03 140)",
+          "oklch(70% 0.03 140)",
+          "oklch(82% 0.03 140)",
+          "oklch(95% 0.03 140)"
+        ]
+      },
+      "dim-sage": {
+        "role": "neutral",
+        "displayName": "Dim Sage (dark)",
+        "canonical": "#8ea898",
+        "tonalRamp": [
+          "oklch(15% 0.035 160)",
+          "oklch(26% 0.035 160)",
+          "oklch(37% 0.035 160)",
+          "oklch(48% 0.035 160)",
+          "oklch(59% 0.035 160)",
+          "oklch(70% 0.035 160)",
+          "oklch(82% 0.035 160)",
+          "oklch(95% 0.035 160)"
+        ]
+      },
+      "dim-sage-light": {
+        "role": "neutral",
+        "displayName": "Dim Sage (light)",
+        "canonical": "#46594d",
+        "tonalRamp": [
+          "oklch(15% 0.035 160)",
+          "oklch(26% 0.035 160)",
+          "oklch(37% 0.035 160)",
+          "oklch(48% 0.035 160)",
+          "oklch(59% 0.035 160)",
+          "oklch(70% 0.035 160)",
+          "oklch(82% 0.035 160)",
+          "oklch(95% 0.035 160)"
+        ]
+      },
+      "amber": {
+        "role": "primary",
+        "displayName": "Lectern Amber (dark)",
+        "canonical": "#f2a93b",
+        "tonalRamp": [
+          "oklch(15% 0.14 70)",
+          "oklch(26% 0.14 70)",
+          "oklch(37% 0.14 70)",
+          "oklch(48% 0.14 70)",
+          "oklch(59% 0.14 70)",
+          "oklch(70% 0.14 70)",
+          "oklch(82% 0.14 70)",
+          "oklch(95% 0.14 70)"
+        ]
+      },
+      "amber-light": {
+        "role": "primary",
+        "displayName": "Lectern Amber (light)",
+        "canonical": "#845000",
+        "tonalRamp": [
+          "oklch(15% 0.14 70)",
+          "oklch(26% 0.14 70)",
+          "oklch(37% 0.14 70)",
+          "oklch(48% 0.14 70)",
+          "oklch(59% 0.14 70)",
+          "oklch(70% 0.14 70)",
+          "oklch(82% 0.14 70)",
+          "oklch(95% 0.14 70)"
+        ]
+      },
+      "amber-fill": {
+        "role": "primary",
+        "displayName": "Amber Fill (dark)",
+        "canonical": "#f2a93b",
+        "tonalRamp": [
+          "oklch(15% 0.14 70)",
+          "oklch(26% 0.14 70)",
+          "oklch(37% 0.14 70)",
+          "oklch(48% 0.14 70)",
+          "oklch(59% 0.14 70)",
+          "oklch(70% 0.14 70)",
+          "oklch(82% 0.14 70)",
+          "oklch(95% 0.14 70)"
+        ]
+      },
+      "amber-fill-light": {
+        "role": "primary",
+        "displayName": "Amber Fill (light)",
+        "canonical": "#e0970f",
+        "tonalRamp": [
+          "oklch(15% 0.14 70)",
+          "oklch(26% 0.14 70)",
+          "oklch(37% 0.14 70)",
+          "oklch(48% 0.14 70)",
+          "oklch(59% 0.14 70)",
+          "oklch(70% 0.14 70)",
+          "oklch(82% 0.14 70)",
+          "oklch(95% 0.14 70)"
+        ]
+      },
+      "on-amber": {
+        "role": "primary",
+        "displayName": "On-Amber (dark)",
+        "canonical": "#171002",
+        "tonalRamp": [
+          "oklch(15% 0.03 75)",
+          "oklch(26% 0.03 75)",
+          "oklch(37% 0.03 75)",
+          "oklch(48% 0.03 75)",
+          "oklch(59% 0.03 75)",
+          "oklch(70% 0.03 75)",
+          "oklch(82% 0.03 75)",
+          "oklch(95% 0.03 75)"
+        ]
+      },
+      "on-amber-light": {
+        "role": "primary",
+        "displayName": "On-Amber (light)",
+        "canonical": "#150e00",
+        "tonalRamp": [
+          "oklch(15% 0.03 75)",
+          "oklch(26% 0.03 75)",
+          "oklch(37% 0.03 75)",
+          "oklch(48% 0.03 75)",
+          "oklch(59% 0.03 75)",
+          "oklch(70% 0.03 75)",
+          "oklch(82% 0.03 75)",
+          "oklch(95% 0.03 75)"
+        ]
+      },
+      "selection": {
+        "role": "neutral",
+        "displayName": "Selection (dark)",
+        "canonical": "#2c2511",
+        "tonalRamp": [
+          "oklch(15% 0.03 85)",
+          "oklch(26% 0.03 85)",
+          "oklch(37% 0.03 85)",
+          "oklch(48% 0.03 85)",
+          "oklch(59% 0.03 85)",
+          "oklch(70% 0.03 85)",
+          "oklch(82% 0.03 85)",
+          "oklch(95% 0.03 85)"
+        ]
+      },
+      "selection-light": {
+        "role": "neutral",
+        "displayName": "Selection (light)",
+        "canonical": "#cfe0e6",
+        "tonalRamp": [
+          "oklch(15% 0.03 85)",
+          "oklch(26% 0.03 85)",
+          "oklch(37% 0.03 85)",
+          "oklch(48% 0.03 85)",
+          "oklch(59% 0.03 85)",
+          "oklch(70% 0.03 85)",
+          "oklch(82% 0.03 85)",
+          "oklch(95% 0.03 85)"
+        ]
+      },
+      "phosphor-green": {
+        "role": "secondary",
+        "displayName": "Phosphor Green (dark)",
+        "canonical": "#5fdc86",
+        "tonalRamp": [
+          "oklch(15% 0.16 150)",
+          "oklch(26% 0.16 150)",
+          "oklch(37% 0.16 150)",
+          "oklch(48% 0.16 150)",
+          "oklch(59% 0.16 150)",
+          "oklch(70% 0.16 150)",
+          "oklch(82% 0.16 150)",
+          "oklch(95% 0.16 150)"
+        ]
+      },
+      "phosphor-green-light": {
+        "role": "secondary",
+        "displayName": "Phosphor Green (light)",
+        "canonical": "#0d6b34",
+        "tonalRamp": [
+          "oklch(15% 0.16 150)",
+          "oklch(26% 0.16 150)",
+          "oklch(37% 0.16 150)",
+          "oklch(48% 0.16 150)",
+          "oklch(59% 0.16 150)",
+          "oklch(70% 0.16 150)",
+          "oklch(82% 0.16 150)",
+          "oklch(95% 0.16 150)"
+        ]
+      },
+      "signal-red": {
+        "role": "tertiary",
+        "displayName": "Signal Red (dark)",
+        "canonical": "#ff7d70",
+        "tonalRamp": [
+          "oklch(15% 0.17 28)",
+          "oklch(26% 0.17 28)",
+          "oklch(37% 0.17 28)",
+          "oklch(48% 0.17 28)",
+          "oklch(59% 0.17 28)",
+          "oklch(70% 0.17 28)",
+          "oklch(82% 0.17 28)",
+          "oklch(95% 0.17 28)"
+        ]
+      },
+      "signal-red-light": {
+        "role": "tertiary",
+        "displayName": "Signal Red (light)",
+        "canonical": "#b3261e",
+        "tonalRamp": [
+          "oklch(15% 0.17 28)",
+          "oklch(26% 0.17 28)",
+          "oklch(37% 0.17 28)",
+          "oklch(48% 0.17 28)",
+          "oklch(59% 0.17 28)",
+          "oklch(70% 0.17 28)",
+          "oklch(82% 0.17 28)",
+          "oklch(95% 0.17 28)"
+        ]
+      },
+      "data-cyan": {
+        "role": "tertiary",
+        "displayName": "Data Cyan (dark)",
+        "canonical": "#4cc8df",
+        "tonalRamp": [
+          "oklch(15% 0.11 215)",
+          "oklch(26% 0.11 215)",
+          "oklch(37% 0.11 215)",
+          "oklch(48% 0.11 215)",
+          "oklch(59% 0.11 215)",
+          "oklch(70% 0.11 215)",
+          "oklch(82% 0.11 215)",
+          "oklch(95% 0.11 215)"
+        ]
+      },
+      "data-cyan-light": {
+        "role": "tertiary",
+        "displayName": "Data Cyan (light)",
+        "canonical": "#066a80",
+        "tonalRamp": [
+          "oklch(15% 0.11 215)",
+          "oklch(26% 0.11 215)",
+          "oklch(37% 0.11 215)",
+          "oklch(48% 0.11 215)",
+          "oklch(59% 0.11 215)",
+          "oklch(70% 0.11 215)",
+          "oklch(82% 0.11 215)",
+          "oklch(95% 0.11 215)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Display",
+        "purpose": "Page h1: session or deck name."
+      },
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "h2; most sections use rule headings instead."
+      },
+      "audience-question": {
+        "displayName": "Audience question",
+        "purpose": "Poll question and state headings on phones."
+      },
+      "rule-heading": {
+        "displayName": "Rule heading",
+        "purpose": "Section headings drawn as ── name ─── rules."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "h3 subgroups, dim sage."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "All reading text, buttons, inputs, links."
+      },
+      "data": {
+        "displayName": "Data",
+        "purpose": "Counts, dates, times, tags, breadcrumbs, status line, key/value tables."
+      },
+      "label": {
+        "displayName": "Kbd label",
+        "purpose": "Kbd chips inside buttons."
+      }
+    },
+    "shadows": [
+      {
+        "name": "selected-ring",
+        "value": "inset 0 0 0 1px var(--amber)",
+        "purpose": "Selected audience option card only; thickens the border, does not lift."
+      }
+    ],
+    "motion": [
+      {
+        "name": "state-color",
+        "value": "0.18s (background-color, border-color, color)",
+        "purpose": "Hover and selection color changes on buttons, run rows and option cards."
+      },
+      {
+        "name": "bar-fill",
+        "value": "transform 0.25s cubic-bezier(0.16, 1, 0.3, 1)",
+        "purpose": "Result bar fills scaling in."
+      },
+      {
+        "name": "reduced-motion",
+        "value": "transition/animation 0.01ms under prefers-reduced-motion: reduce",
+        "purpose": "Respect reduced motion across .term."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "compact",
+        "value": "600px"
+      },
+      {
+        "name": "deck-rows",
+        "value": "640px"
+      },
+      {
+        "name": "status-next",
+        "value": "760px"
+      },
+      {
+        "name": "cockpit-columns",
+        "value": "900px"
+      },
+      {
+        "name": "touch",
+        "value": "(pointer: coarse)"
+      }
+    ],
+    "focus": {
+      "value": "outline: 2px solid var(--amber); outline-offset: 2px (0 on fields, -2px in link rows)"
+    },
+    "scope": {
+      "selector": "html.term",
+      "exception": "Projector route (/screen/:pid/:code): Screen.svelte, ResultsBars.svelte, app.css keep their legacy look and are outside this system."
+    },
+    "shortcuts": {
+      "ArrowLeft/PageUp": "previous slide",
+      "ArrowRight/PageDown": "next slide",
+      "o": "open next poll on this slide",
+      "c": "close voting",
+      "r": "reveal or hide results",
+      "q": "toggle QR code",
+      "s": "slide only",
+      "p": "show poll"
+    },
+    "timeFormat": {
+      "time": "local 24h HH:MM",
+      "date": "YYYY-MM-DD",
+      "dateTime": "YYYY-MM-DD HH:MM",
+      "source": "web/src/lib/time.ts"
+    }
+  },
+  "components": [
+    {
+      "name": "Primary Button (next step)",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The single filled amber action per area; in the cockpit it is the next step, with its kbd chip.",
+      "html": "<div class=\"ds\"><button class=\"ds-btn ds-btn-primary\">Close voting<kbd class=\"ds-kbd\">c</kbd></button></div>",
+      "css": ":host{--bg:#0b130e;--bg2:#131f17;--line:#2a3d30;--fg:#d8e5d4;--dim:#8ea898;--amber:#f2a93b;--fill:#f2a93b;--on-fill:#171002;--sel:#2c2511;--green:#5fdc86;--red:#ff7d70;--cyan:#4cc8df;} .ds{font-family:'Martian Mono Variable',ui-monospace,Menlo,monospace;font-stretch:87.5%;font-size:14px;line-height:1.5;font-variant-numeric:tabular-nums;background:var(--bg);color:var(--fg);padding:12px;} .ds-btn{font:inherit;font-stretch:87.5%;display:inline-flex;align-items:center;gap:1ch;min-height:44px;padding:6px 14px;border:1px solid var(--line);border-radius:2px;background:transparent;color:var(--fg);cursor:pointer;transition:background-color .18s,border-color .18s,color .18s;} .ds-btn:hover:not(:disabled){border-color:var(--amber);color:var(--amber);} .ds-btn:focus-visible{outline:2px solid var(--amber);outline-offset:2px;} .ds-btn:disabled{opacity:.45;cursor:default;} .ds-kbd{font:inherit;font-size:.8em;font-stretch:75%;line-height:1;padding:2px 5px;border:1px solid currentColor;border-radius:2px;opacity:.8;} .ds-btn-primary{background:var(--fill);border-color:var(--fill);color:var(--on-fill);font-weight:600;} .ds-btn-primary:hover:not(:disabled){background:var(--fill);border-color:var(--fill);color:var(--on-fill);filter:brightness(1.08);}"
+    },
+    {
+      "name": "Quiet Button and Segmented Group",
+      "kind": "button",
+      "refersTo": "button-quiet",
+      "description": "Outlined quiet buttons; butted together as a segmented group with the pressed one in amber over the selection tint.",
+      "html": "<div class=\"ds\"><div class=\"ds-seg\"><button class=\"ds-btn ds-sm\">Slide only<kbd class=\"ds-kbd\">s</kbd></button><button class=\"ds-btn ds-sm\">QR code<kbd class=\"ds-kbd\">q</kbd></button><button class=\"ds-btn ds-sm ds-on\" aria-pressed=\"true\">Poll<kbd class=\"ds-kbd\">p</kbd></button></div> <button class=\"ds-btn ds-danger\">End session</button></div>",
+      "css": ":host{--bg:#0b130e;--bg2:#131f17;--line:#2a3d30;--fg:#d8e5d4;--dim:#8ea898;--amber:#f2a93b;--fill:#f2a93b;--on-fill:#171002;--sel:#2c2511;--green:#5fdc86;--red:#ff7d70;--cyan:#4cc8df;} .ds{font-family:'Martian Mono Variable',ui-monospace,Menlo,monospace;font-stretch:87.5%;font-size:14px;line-height:1.5;font-variant-numeric:tabular-nums;background:var(--bg);color:var(--fg);padding:12px;} .ds-btn{font:inherit;font-stretch:87.5%;display:inline-flex;align-items:center;gap:1ch;min-height:44px;padding:6px 14px;border:1px solid var(--line);border-radius:2px;background:transparent;color:var(--fg);cursor:pointer;transition:background-color .18s,border-color .18s,color .18s;} .ds-btn:hover:not(:disabled){border-color:var(--amber);color:var(--amber);} .ds-btn:focus-visible{outline:2px solid var(--amber);outline-offset:2px;} .ds-btn:disabled{opacity:.45;cursor:default;} .ds-kbd{font:inherit;font-size:.8em;font-stretch:75%;line-height:1;padding:2px 5px;border:1px solid currentColor;border-radius:2px;opacity:.8;} .ds-sm{min-height:32px;padding:2px 10px;font-size:.9em;} .ds-seg{display:inline-flex;} .ds-seg .ds-btn{border-radius:0;margin-left:-1px;} .ds-seg .ds-btn:first-child{margin-left:0;} .ds-on{border-color:var(--amber);color:var(--amber);background:var(--sel);position:relative;z-index:1;} .ds-danger{color:var(--red);border-color:color-mix(in srgb,var(--red) 45%,var(--line));} .ds-danger:hover:not(:disabled){border-color:var(--red);color:var(--red);}"
+    },
+    {
+      "name": "Link Row",
+      "kind": "nav",
+      "refersTo": "link-action",
+      "description": "Secondary actions as amber underlined text, separated by 1px dim left borders.",
+      "html": "<div class=\"ds\"><nav class=\"ds-links\"><a class=\"ds-lnk\" href=\"#\">Open screen</a><a class=\"ds-lnk\" href=\"#\">Results</a><button class=\"ds-lnk\">Copy audience link</button><a class=\"ds-lnk\" href=\"#\">Export CSV</a></nav></div>",
+      "css": ":host{--bg:#0b130e;--bg2:#131f17;--line:#2a3d30;--fg:#d8e5d4;--dim:#8ea898;--amber:#f2a93b;--fill:#f2a93b;--on-fill:#171002;--sel:#2c2511;--green:#5fdc86;--red:#ff7d70;--cyan:#4cc8df;} .ds{font-family:'Martian Mono Variable',ui-monospace,Menlo,monospace;font-stretch:87.5%;font-size:14px;line-height:1.5;font-variant-numeric:tabular-nums;background:var(--bg);color:var(--fg);padding:12px;} .ds-links{display:flex;flex-wrap:wrap;align-items:center;gap:4px 0;overflow:hidden;} .ds-lnk{font:inherit;background:none;border:0;margin:0 0 0 -1px;padding:0 1ch;color:var(--amber);cursor:pointer;text-decoration:underline;text-underline-offset:.25em;text-decoration-thickness:1px;} .ds-lnk ~ .ds-lnk{border-left:1px solid var(--dim);} .ds-lnk:hover{text-decoration-thickness:2px;} .ds-lnk:focus-visible{outline:2px solid var(--amber);outline-offset:-2px;}"
+    },
+    {
+      "name": "Rule Heading and Bracket Tags",
+      "kind": "custom",
+      "refersTo": "tag",
+      "description": "Section heading drawn as a rule; states as condensed bracket tags.",
+      "html": "<div class=\"ds\"><h2 class=\"ds-rule\">Voting</h2><p>Which control is most effective? <span class=\"ds-tag ds-live\">open</span> <span class=\"ds-tag\">single</span> <span class=\"ds-tag ds-ended\">ended</span></p></div>",
+      "css": ":host{--bg:#0b130e;--bg2:#131f17;--line:#2a3d30;--fg:#d8e5d4;--dim:#8ea898;--amber:#f2a93b;--fill:#f2a93b;--on-fill:#171002;--sel:#2c2511;--green:#5fdc86;--red:#ff7d70;--cyan:#4cc8df;} .ds{font-family:'Martian Mono Variable',ui-monospace,Menlo,monospace;font-stretch:87.5%;font-size:14px;line-height:1.5;font-variant-numeric:tabular-nums;background:var(--bg);color:var(--fg);padding:12px;} .ds-rule{display:flex;align-items:center;gap:1ch;margin:0 0 8px;font-size:.85rem;font-stretch:100%;font-weight:500;color:var(--dim);} .ds-rule::before{content:'';width:2ch;border-top:1px solid var(--line);} .ds-rule::after{content:'';flex:1;border-top:1px solid var(--line);} .ds-tag{font-stretch:75%;color:var(--dim);white-space:nowrap;} .ds-tag::before{content:'[';} .ds-tag::after{content:']';} .ds-live{color:var(--green);} .ds-ended{color:var(--red);}"
+    },
+    {
+      "name": "Status Line",
+      "kind": "custom",
+      "refersTo": "status-line",
+      "description": "tmux-style bottom line carrying live state; never wraps.",
+      "html": "<div class=\"ds\"><footer class=\"ds-status\"><span class=\"ds-live\"><i class=\"ds-dot\"></i>live</span><span class=\"ds-grow\">Group A</span><span>slide 4/26</span><span>31 audience · 1 screen</span><span>27/31 voted</span><span>next <kbd class=\"ds-kbd\">c</kbd> close</span></footer></div>",
+      "css": ":host{--bg:#0b130e;--bg2:#131f17;--line:#2a3d30;--fg:#d8e5d4;--dim:#8ea898;--amber:#f2a93b;--fill:#f2a93b;--on-fill:#171002;--sel:#2c2511;--green:#5fdc86;--red:#ff7d70;--cyan:#4cc8df;} .ds{font-family:'Martian Mono Variable',ui-monospace,Menlo,monospace;font-stretch:87.5%;font-size:14px;line-height:1.5;font-variant-numeric:tabular-nums;background:var(--bg);color:var(--fg);padding:12px;} .ds-status{display:flex;flex-wrap:nowrap;overflow:hidden;background:var(--bg2);border-top:1px solid var(--line);font-stretch:75%;font-size:.85rem;} .ds-status>*{padding:6px 1.5ch;border-left:1px solid var(--line);white-space:nowrap;flex:none;} .ds-status>:first-child{padding-left:1ch;border-left:0;font-weight:600;} .ds-live{color:var(--green);} .ds-grow{flex:1 1 0;min-width:0;overflow:hidden;text-overflow:ellipsis;} .ds-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:currentColor;margin-right:.8ch;} .ds-kbd{font:inherit;font-size:.8em;line-height:1;padding:2px 5px;border:1px solid currentColor;border-radius:2px;opacity:.8;margin:0 1ch;}"
+    },
+    {
+      "name": "Text Field",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Panel field with a dim label above; amber border and flush outline on focus.",
+      "html": "<div class=\"ds\"><label class=\"ds-f\">Title (optional)<input class=\"ds-input\" placeholder=\"Audit deck\"></label></div>",
+      "css": ":host{--bg:#0b130e;--bg2:#131f17;--line:#2a3d30;--fg:#d8e5d4;--dim:#8ea898;--amber:#f2a93b;--fill:#f2a93b;--on-fill:#171002;--sel:#2c2511;--green:#5fdc86;--red:#ff7d70;--cyan:#4cc8df;} .ds{font-family:'Martian Mono Variable',ui-monospace,Menlo,monospace;font-stretch:87.5%;font-size:14px;line-height:1.5;font-variant-numeric:tabular-nums;background:var(--bg);color:var(--fg);padding:12px;} .ds-f{display:grid;gap:4px;font-size:.85rem;color:var(--dim);max-width:24rem;} .ds-input{font:inherit;font-stretch:87.5%;font-size:14px;color:var(--fg);background:var(--bg2);border:1px solid var(--line);border-radius:2px;padding:8px 10px;min-height:40px;} .ds-input::placeholder{color:var(--dim);} .ds-input:focus-visible{outline:2px solid var(--amber);outline-offset:0;border-color:var(--amber);}"
+    },
+    {
+      "name": "Bar List",
+      "kind": "custom",
+      "refersTo": "bar-fill",
+      "description": "Result rows with condensed counts and a 6px cyan bar on a rule-line track.",
+      "html": "<div class=\"ds\"><ul class=\"ds-bars\"><li><div class=\"ds-row\"><span>Approval limits</span><span class=\"ds-num\"><b>8</b> · 30%</span></div><div class=\"ds-track\"><div class=\"ds-fill\" style=\"width:30%\"></div></div></li><li><div class=\"ds-row\"><span>Access reviews</span><span class=\"ds-num\"><b>9</b> · 33%</span></div><div class=\"ds-track\"><div class=\"ds-fill\" style=\"width:33%\"></div></div></li></ul></div>",
+      "css": ":host{--bg:#0b130e;--bg2:#131f17;--line:#2a3d30;--fg:#d8e5d4;--dim:#8ea898;--amber:#f2a93b;--fill:#f2a93b;--on-fill:#171002;--sel:#2c2511;--green:#5fdc86;--red:#ff7d70;--cyan:#4cc8df;} .ds{font-family:'Martian Mono Variable',ui-monospace,Menlo,monospace;font-stretch:87.5%;font-size:14px;line-height:1.5;font-variant-numeric:tabular-nums;background:var(--bg);color:var(--fg);padding:12px;} .ds-bars{list-style:none;padding:0;margin:0;display:grid;gap:10px;} .ds-row{display:flex;justify-content:space-between;gap:2ch;} .ds-num{font-stretch:75%;white-space:nowrap;} .ds-track{height:6px;background:var(--line);margin-top:3px;} .ds-fill{height:100%;background:var(--cyan);}"
+    },
+    {
+      "name": "Option Card (audience)",
+      "kind": "card",
+      "refersTo": "option-card",
+      "description": "56px tappable answer row with a drawn radio or check mark; selected gets amber border, inset ring and selection tint.",
+      "html": "<div class=\"ds\"><div class=\"ds-opts\"><button class=\"ds-card\" role=\"radio\" aria-checked=\"false\"><span class=\"ds-mark\"></span>Segregation of duties</button><button class=\"ds-card ds-sel\" role=\"radio\" aria-checked=\"true\"><span class=\"ds-mark\"></span>Approval limits</button></div></div>",
+      "css": ":host{--bg:#0b130e;--bg2:#131f17;--line:#2a3d30;--fg:#d8e5d4;--dim:#8ea898;--amber:#f2a93b;--fill:#f2a93b;--on-fill:#171002;--sel:#2c2511;--green:#5fdc86;--red:#ff7d70;--cyan:#4cc8df;} .ds{font-family:'Martian Mono Variable',ui-monospace,Menlo,monospace;font-stretch:87.5%;font-size:14px;line-height:1.5;font-variant-numeric:tabular-nums;background:var(--bg);color:var(--fg);padding:12px;} .ds-opts{display:flex;flex-direction:column;gap:8px;max-width:22rem;} .ds-card{display:flex;align-items:center;gap:14px;width:100%;min-height:56px;padding:12px 14px;text-align:left;font:inherit;font-size:1rem;line-height:1.4;color:var(--fg);background:var(--bg2);border:1px solid var(--line);border-radius:2px;cursor:pointer;transition:background-color .18s,border-color .18s,box-shadow .18s;} .ds-card:hover{border-color:var(--amber);} .ds-card:focus-visible{outline:2px solid var(--amber);outline-offset:2px;} .ds-sel{border-color:var(--amber);background:var(--sel);box-shadow:inset 0 0 0 1px var(--amber);} .ds-mark{flex:none;position:relative;width:22px;height:22px;border:1px solid var(--dim);border-radius:50%;} .ds-sel .ds-mark{border-color:var(--amber);} .ds-sel .ds-mark::after{content:'';position:absolute;inset:5px;border-radius:50%;background:var(--amber);}"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Kept Session",
+    "overview": "**Creative North Star: \"The Kept Session\"**\n\nThe presenter and audience UI read like a well-kept TUI session: one monospace voice, panes divided by 1px rules instead of cards, and live state always on a status line. The terminal lends type, palette, density and one signature move (the tmux-style status line with kbd chips on the buttons themselves); the controls stay standard web buttons, inputs, radio groups and links. There is no fake prompt and no function-key bar.\n\nDensity is high and calm. A lecturer in a dim hall sees the slide, what is on screen and the open vote at once, and the single amber button always names the next step. Students on a 360px phone get the same voice at larger sizes: one question, tall option rows, one sticky submit.\n\nThe world is scoped: every rule lives under `html.term`, which App.svelte sets for every route except the projector. The projector (`/screen/:pid/:code`: Screen.svelte, ResultsBars.svelte, app.css) is an explicit exception. It keeps its legacy look and is not part of this system.",
+    "keyCharacteristics": [
+      "One typeface (Martian Mono, variable weight and width); hierarchy comes from width, weight and color, not from a second family.",
+      "Deep green-black ground in dark; cool grey-green in light, never cream.",
+      "Square corners (2px at most), 1px rules, flat surfaces.",
+      "Section headings drawn as `── name ─────` rules; states written as bracket tags like `[live]`.",
+      "Color is semantic only: amber acts, green is live, red is ended or destructive, cyan is data, sage is secondary.",
+      "Keyboard shortcuts shown inline as kbd chips; never the only path."
+    ],
+    "rules": [
+      {
+        "name": "The Five Voices Rule",
+        "body": "Amber acts, green is live, red is ended or destructive, cyan is data, sage is secondary. A color never carries a second meaning, and nothing is colored for decoration.",
+        "section": "colors"
+      },
+      {
+        "name": "The One Amber Fill Rule",
+        "body": "At most one filled amber button per area, and in the live cockpit it is the next step (open, then reveal, then close). Every other action is a quiet outlined button or an amber text link.",
+        "section": "colors"
+      },
+      {
+        "name": "The Never Cream Rule",
+        "body": "The light theme is a cool grey-green (`ground-light`); warm paper tones are out.",
+        "section": "colors"
+      },
+      {
+        "name": "The Three Widths Rule",
+        "body": "Width encodes role: 112.5% titles, 87.5% body, 75% data. Use width before adding size steps.",
+        "section": "typography"
+      },
+      {
+        "name": "The Local Clock Rule",
+        "body": "Times are local and 24-hour: `HH:MM`, dates `YYYY-MM-DD`, together `YYYY-MM-DD HH:MM` (web/src/lib/time.ts). Never a 12-hour clock or a locale-dependent date.",
+        "section": "typography"
+      },
+      {
+        "name": "The Rules Not Cards Rule",
+        "body": "Separate with a 1px line, not a raised or rounded container. A bordered box is reserved for controls (buttons, inputs, option cards, the run list) and the inline New deck form.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "**Do** scope every rule under `html.term` so the projector stays untouched.",
+      "**Do** keep one filled amber button per area, and make it the next step in the live cockpit.",
+      "**Do** set section headings as rule headings and states as bracket tags.",
+      "**Do** use the three widths (112.5 / 87.5 / 75%) and tabular numerals for data.",
+      "**Do** put the kbd chip inside the button it triggers, add `aria-keyshortcuts`, and keep the button working without the key.",
+      "**Do** format times as local 24-hour `HH:MM` and dates as `YYYY-MM-DD`.",
+      "**Do** keep audience targets at 48px or more (option cards 56px, submit 52px) and presenter targets at 44px on touch.",
+      "**Do** darken the semantic colors in light theme for AA rather than reusing the dark values."
+    ],
+    "donts": [
+      "**Don't** use rounded white panels, pill badges or rows of equal-weight outline buttons.",
+      "**Don't** add a fake prompt, blinking cursor or function-key bar. The terminal lends type, palette, density and the status line, not theatre.",
+      "**Don't** use color for decoration or give a semantic color a second meaning.",
+      "**Don't** add drop shadows or radii above 2px.",
+      "**Don't** use a cream or warm-paper light theme.",
+      "**Don't** apply this system to the projector (Screen.svelte, ResultsBars.svelte, app.css)."
+    ]
+  }
+}

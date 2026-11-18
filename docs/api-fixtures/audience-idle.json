@@ -1,0 +1,7 @@
+{
+  "session": { "code": "abcde23456", "label": "Class A" },
+  "presentation": { "id": 7, "title": "Intro to HtDP" },
+  "poll": null,
+  "my_vote": null,
+  "qa": { "enabled": false, "open": false, "started": false, "questions": [] }
+}

@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Local core-edition dev (password login): loads .env, makes sure its database exists (CREATE DATABASE if
+# missing, never a reset), builds the web app once, runs the Racket server and the vite dev server.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+if [ -f .env ]; then set -a; . ./.env; set +a; fi
+scripts/ensure-db
+(cd web && npm install --no-audit --no-fund && npm run build)
+trap 'kill 0' EXIT INT TERM
+racket server/main.rkt &
+(cd web && npm run dev) &
+wait

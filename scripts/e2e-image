@@ -1,0 +1,158 @@
+#!/usr/bin/env bash
+# End-to-end check of an Orquelo image: the `user` command line, password login, auth guard, the decks API,
+# SSE role isolation, deck ownership, screen code, CSV, password change and suspension. Running the image's
+# own `user` commands and logins also exercises libcrypto (scrypt) and call-in-os-thread under `raco distribute`.
+# Usage: scripts/e2e-image [image]   (default orquelo:local; needs docker, curl, jq, openssl; build the image
+# with nix build .#image or scripts/build-image-in-docker)
+set -uo pipefail
+IMG=${1:-orquelo:local}
+W=$(mktemp -d); cd "$W"
+P=18080; B=http://localhost:$P; NET=orquelo-e2e
+pass=0; fail=0
+ok() { echo "PASS $1"; pass=$((pass+1)); }
+ko() { echo "FAIL $1"; fail=$((fail+1)); }
+chk() { if eval "$2"; then ok "$1"; else ko "$1"; fi; }
+
+cleanup() { docker rm -f orquelo-e2e-app orquelo-e2e-pg >/dev/null 2>&1; docker network rm $NET >/dev/null 2>&1; kill $(jobs -p) 2>/dev/null; }
+trap cleanup EXIT
+cleanup; docker network create $NET >/dev/null
+docker run -d --name orquelo-e2e-pg --network $NET -e POSTGRES_PASSWORD=pw -e POSTGRES_USER=orquelo -e POSTGRES_DB=orquelo postgres:17 >/dev/null
+for i in $(seq 30); do docker exec orquelo-e2e-pg pg_isready -U orquelo >/dev/null 2>&1 && break; sleep 1; done; sleep 2
+
+DBURL=postgresql://orquelo:pw@orquelo-e2e-pg:5432/orquelo
+run_app() {
+  docker rm -f orquelo-e2e-app >/dev/null 2>&1
+  docker run -d --name orquelo-e2e-app --network $NET -p $P:8080 --user 1000:1000 \
+    -e DATABASE_URL=$DBURL -e PUBLIC_BASE_URL=$B -e UPLOAD_DIR=/data -e SESSION_SECRET=$(openssl rand -base64 48) "$@" "$IMG" >/dev/null
+  for i in $(seq 30); do curl -sf $B/healthz >/dev/null && return 0; sleep 1; done; docker logs orquelo-e2e-app | tail -20; return 1
+}
+# the image's own `user` command; stdin is passed through (a password goes there, never in argv)
+usr() { docker run --rm -i --network $NET --user 1000:1000 -e DATABASE_URL=$DBURL "$IMG" user "$@"; }
+PW1="e2e-password-one"; PW2="e2e-password-two"
+chk "user add a" 'ADD=$(usr add a@example.org --name A <<<"$PW1" 2>&1)'
+chk "user add b" 'usr add b@example.org <<<"$PW1" >/dev/null 2>&1'
+chk "user add refuses a duplicate" '! usr add a@example.org <<<"$PW1" >/dev/null 2>&1'
+chk "user add refuses a short password" '! usr add c@example.org <<<"short" >/dev/null 2>&1'
+chk "user list shows both" 'L=$(usr list </dev/null 2>&1) && grep -q "a@example.org" <<<"$L" && grep -q "b@example.org" <<<"$L" && ! grep -q "$PW1" <<<"$L"'
+run_app || { ko "app start"; exit 1; }
+ok "app start + /healthz"
+
+code() { curl -s -o /dev/null -w %{http_code} "$@"; }
+chk "decks API needs a session -> 401" '[ "$(code $B/api/decks)" = 401 ]'
+chk "unknown API path -> 404" '[ "$(code $B/api/nope)" = 404 ]'
+
+# jar email password: a password login (the Origin header is required)
+login() { # prints the status
+  curl -s -c $1 -o /dev/null -w %{http_code} -H "Origin: $B" -H 'Content-Type: application/json' \
+    -d "$(jq -nc --arg e "$2" --arg p "$3" '{email:$e,password:$p}')" $B/auth/password
+}
+chk "wrong password -> 401" '[ "$(login x.jar a@example.org wrong-password-here)" = 401 ]'
+chk "unknown email -> 401" '[ "$(login x.jar nobody@example.org $PW1)" = 401 ]'
+chk "login A -> 204" '[ "$(login a.jar a@example.org $PW1)" = 204 ]'
+chk "login B -> 204" '[ "$(login b.jar b@example.org $PW1)" = 204 ]'
+chk "login A -> /api/me" '[ "$(curl -s -b a.jar $B/api/me | jq -r .user.email)" = a@example.org ]'
+chk "login B -> /api/me" '[ "$(curl -s -b b.jar $B/api/me | jq -r .user.email)" = b@example.org ]'
+A=(-s -b a.jar -c a.jar -H "Origin: $B")
+
+# minimal 2-page PDF
+printf '%%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R 4 0 R]/Count 2>>endobj\n3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 200]>>endobj\n4 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 200]>>endobj\ntrailer<</Root 1 0 R>>\n%%%%EOF\n' > deck.pdf
+PRES=$(curl "${A[@]}" -F title="E2E deck" -F page_count=2 -F pdf=@deck.pdf $B/api/decks)
+PID=$(jq -r .id <<<"$PRES"); chk "upload PDF ($PID)" '[[ "$PID" =~ ^[0-9]+$ ]]'
+
+OPTS=$(jq -nc '[range(10)|{label:"Option number \(.+1) with a fairly long label to test wrapping",exclusive:false}]')
+POLL=$(curl "${A[@]}" -H 'Content-Type: application/json' -d "{\"slide\":1,\"question\":\"Pick any\",\"kind\":\"multi\",\"options\":$OPTS}" $B/api/decks/$PID/polls)
+POLLID=$(jq -r .id <<<"$POLL")
+chk "create 10-option poll" '[ "$(jq ".options|length" <<<"$POLL")" = 10 ]'
+
+JA=$(curl "${A[@]}" -H 'Content-Type: application/json' -d '{"label":"Group A"}' $B/api/decks/$PID/sessions)
+JB=$(curl "${A[@]}" -H 'Content-Type: application/json' -d '{"label":"Group B"}' $B/api/decks/$PID/sessions)
+SA=$(jq -r .code <<<"$JA"); SB=$(jq -r .code <<<"$JB"); XA=$(jq -r .screen_code <<<"$JA"); XB=$(jq -r .screen_code <<<"$JB")
+chk "create sessions A=$SA B=$SB" '[[ "$SA" =~ ^[a-z2-7]{10}$ && "$SB" =~ ^[a-z2-7]{10}$ ]]'
+chk "screen codes differ from audience codes" '[[ "$XA" =~ ^[a-z2-7]{10}$ && "$XA" != "$SA" && "$XB" != "$SB" ]]'
+last() { grep "^data:" "$1" | tail -1 | cut -c7-; }  # newest SSE payload
+chk "audience code can't get screen role -> 400" '[ "$(code "$B/api/s/$PID/$SA/stream?role=screen")" = 400 ]'
+chk "audience code can't get slides.pdf" '[ "$(code $B/api/s/$PID/$SA/slides.pdf)" = 404 ]'
+chk "audience code is not a screen code" '[ "$(code $B/api/screen/$PID/$SA)" = 404 ]'
+chk "screen info via screen code" '[ "$(curl -s $B/api/screen/$PID/$XA | jq -r .session.code)" = "$SA" ]'
+
+curl -sN "$B/api/screen/$PID/$XA/stream" > screenA.sse &
+curl -s -c s1.jar -o /dev/null "$B/api/s/$PID/$SA"
+curl -sN -b s1.jar "$B/api/s/$PID/$SA/stream?role=audience" > audA.sse &
+curl -sN "$B/api/s/$PID/$SB/stream?role=audience" > audB.sse &
+curl -sN -b a.jar "$B/api/sessions/$SA/stream" > modA.sse &
+sleep 2
+
+OPEN=$(curl "${A[@]}" -H 'Content-Type: application/json' -d "{\"poll_id\":$POLLID}" $B/api/sessions/$SA/poll/open)
+RUN=$(jq -r .run_id <<<"$OPEN"); O1=$(jq -r '.options[0].id' <<<"$OPEN"); O2=$(jq -r '.options[1].id' <<<"$OPEN"); O3=$(jq -r '.options[2].id' <<<"$OPEN")
+chk "open poll on A (run $RUN)" '[[ "$RUN" =~ ^[0-9]+$ ]]'
+sleep 1
+vote() { curl -s -b $1 -c $1 -o /dev/null -w %{http_code} -H 'Content-Type: application/json' -d "{\"run_id\":$RUN,\"option_ids\":$2}" "$B/api/s/$PID/$3/vote"; }
+chk "student1 votes" '[ "$(vote s1.jar "[$O1,$O2]" $SA)" = 200 ]'
+chk "student2 votes" '[ "$(vote s2.jar "[$O1]" $SA)" = 200 ]'
+chk "student2 changes vote" '[ "$(vote s2.jar "[$O3]" $SA)" = 200 ]'
+chk "vote for A run via B -> 409" '[ "$(vote s3.jar "[$O1]" $SB)" = 409 ]'
+chk "wrong code -> 404" '[ "$(curl -s -o /dev/null -w %{http_code} $B/api/s/$PID/aaaaaaaaaa)" = 404 ]'
+chk "code with wrong pid -> 404" '[ "$(curl -s -o /dev/null -w %{http_code} $B/api/s/999999/$SA)" = 404 ]'
+sleep 1
+chk "screen poll overlay has null counts before reveal" 'grep -q "\"count\":null" screenA.sse && ! grep -q "\"count\":[0-9]" screenA.sse'
+chk "screen overlay still shows who voted (total_voters)" 'last screenA.sse | jq -e ".stage.overlay.total_voters == 2 and .stage.overlay.revealed == false" >/dev/null'
+chk "moderator sees live counts before reveal" 'grep -q "\"count\":2" modA.sse'
+curl "${A[@]}" -o /dev/null -X POST $B/api/sessions/$SA/poll/reveal; sleep 1
+chk "screen shows counts after reveal" 'tail -n 3 screenA.sse | grep -q "\"total_voters\":2"'
+chk "reveal puts counts in the overlay" 'last screenA.sse | jq -e ".stage.overlay.revealed == true and (.stage.overlay.options | map(.count) | add) == 3" >/dev/null'
+chk "audience never receives counts" '! grep -q "count\|total_voters" audA.sse'
+chk "audience sees own vote" 'grep -q "\"my_vote\":\[$O1,$O2\]\|\"my_vote\":\[$O2,$O1\]" audA.sse'
+chk "session B never sees A poll" '! grep -q "Pick any" audB.sse && grep -q "\"poll\":null" audB.sse'
+
+# a poll with show_results=true opens revealed; the open run is what the audience sees
+POLL2=$(curl "${A[@]}" -H 'Content-Type: application/json' -d '{"slide":2,"question":"Quick one","kind":"single","options":[{"label":"x","exclusive":false},{"label":"y","exclusive":false}],"show_results":true}' $B/api/decks/$PID/polls)
+chk "poll with show_results=true" '[ "$(jq .show_results <<<"$POLL2")" = true ]'
+curl "${A[@]}" -o /dev/null -X POST $B/api/sessions/$SA/poll/hide
+RUN2=$(curl "${A[@]}" -H 'Content-Type: application/json' -d "{\"poll_id\":$(jq .id <<<"$POLL2")}" $B/api/sessions/$SA/poll/open | jq -r .run_id); sleep 1
+chk "show_results poll opens revealed on the screen" 'last screenA.sse | jq -e ".stage.overlay.run_id == $RUN2 and .stage.overlay.revealed == true" >/dev/null'
+chk "moderator sees the new open run" 'last modA.sse | jq -e ".open_run.run_id == $RUN2 and (.runs | length) == 2" >/dev/null'
+curl "${A[@]}" -o /dev/null -X POST $B/api/sessions/$SA/poll/close; sleep 1
+chk "audience sees no poll once the run is closed" '[ "$(last audA.sse | jq -c .poll)" = null ]'
+chk "closing keeps the overlay up" 'last screenA.sse | jq -e ".stage.overlay.run_id == $RUN2 and .stage.overlay.open == false" >/dev/null'
+OV=$(curl "${A[@]}" -H 'Content-Type: application/json' -d "{\"overlay\":{\"type\":\"poll\",\"run_id\":$RUN}}" -o /dev/null -w %{http_code} $B/api/sessions/$SA/overlay); sleep 1
+chk "re-show a past run: 204 and its stored counts" '[ "$OV" = 204 ] && last screenA.sse | jq -e ".stage.overlay.run_id == $RUN and .stage.overlay.revealed == true and .stage.overlay.total_voters == 2" >/dev/null'
+chk "overlay of a foreign run -> 404" '[ "$(curl "${A[@]}" -H "Content-Type: application/json" -d "{\"overlay\":{\"type\":\"poll\",\"run_id\":$RUN}}" -o /dev/null -w %{http_code} $B/api/sessions/$SB/overlay)" = 404 ]'
+chk "QR overlay" '[ "$(curl "${A[@]}" -H "Content-Type: application/json" -d "{\"overlay\":{\"type\":\"qr\"}}" -o /dev/null -w %{http_code} $B/api/sessions/$SA/overlay)" = 204 ]'
+chk "old /qr endpoint is gone" '[ "$(curl "${A[@]}" -H "Content-Type: application/json" -d "{\"visible\":true}" -o /dev/null -w %{http_code} $B/api/sessions/$SA/qr)" = 404 ]'
+
+echo "waiting 20s for heartbeat..."; sleep 20
+chk "SSE heartbeat" 'grep -q "^: hb" audB.sse'
+
+CSV=$(curl -s -b a.jar $B/api/sessions/$SA/export.csv)
+chk "CSV has 3 option rows (2+1 after change)" '[ "$(tail -n +2 <<<"$CSV" | grep -c .)" = 3 ]'
+echo "$CSV" | head -4
+
+curl "${A[@]}" -o /dev/null -X POST $B/api/sessions/$SA/end; sleep 1
+chk "ended stream event" 'grep -q "event: ended" audA.sse'
+chk "ended session -> 410" '[ "$(curl -s -o /dev/null -w %{http_code} $B/api/s/$PID/$SA)" = 410 ]'
+chk "negative run_id -> 422" '[ "$(curl -s -o /dev/null -w %{http_code} -H "Content-Type: application/json" -d "{\"run_id\":-1,\"option_ids\":[$O1]}" $B/api/s/$PID/$SB/vote)" = 422 ]'
+
+for path in / /decks "/screen/$PID/$XB" "/$PID/$SB"; do
+  chk "SPA route $path" 'curl -s $B$path | grep -qi "<div id=\"app\"\|<!doctype html"'
+done
+ASSET=$(curl -s $B/ | grep -o 'assets/[^"]*\.js' | head -1)
+chk "hashed asset $ASSET" '[ "$(curl -s -o /dev/null -w %{http_code} $B/$ASSET)" = 200 ]'
+chk "PDF served via screen code" '[ "$(code $B/api/screen/$PID/$XB/slides.pdf)" = 200 ]'
+
+# deck ownership: B sees none of A's deck
+chk "B's deck list is empty" '[ "$(curl -s -b b.jar $B/api/decks | jq length)" = 0 ]'
+chk "B gets 404 on A's deck" '[ "$(code -b b.jar $B/api/decks/$PID)" = 404 ]'
+chk "B gets 404 on A's session stream" '[ "$(code -b b.jar $B/api/sessions/$SB/stream)" = 404 ]'
+
+# account management through the image's `user` command
+chk "user passwd revokes the old session" 'usr passwd a@example.org <<<"$PW2" >/dev/null 2>&1 && [ "$(code -b a.jar $B/api/me)" = 401 ]'
+chk "the old password no longer works" '[ "$(login x.jar a@example.org $PW1)" = 401 ]'
+chk "the new password works" '[ "$(login a2.jar a@example.org $PW2)" = 204 ] && [ "$(code -b a2.jar $B/api/me)" = 200 ]'
+CH=$(curl -s -b a2.jar -c a2.jar -o /dev/null -w %{http_code} -X PUT -H "Origin: $B" -H 'Content-Type: application/json' \
+  -d "{\"current\":\"$PW2\",\"new\":\"e2e-password-three\"}" $B/api/me/password)
+chk "PUT /api/me/password -> 204, the new cookie works" '[ "$CH" = 204 ] && [ "$(code -b a2.jar $B/api/me)" = 200 ]'
+chk "user suspend: B is refused at login (403) and loses the session" 'usr suspend b@example.org >/dev/null 2>&1 && [ "$(login x.jar b@example.org $PW1)" = 403 ] && [ "$(code -b b.jar $B/api/me)" = 401 ]'
+docker logs orquelo-e2e-app 2>&1 | grep -i "error\|exn" | head -5
+
+echo "=== $pass passed, $fail failed"
+[ "$fail" = 0 ]

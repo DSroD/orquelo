@@ -1,0 +1,17 @@
+{
+  "session": { "code": "abcde23456", "label": "Class A" },
+  "presentation": { "id": 7, "title": "Intro to HtDP" },
+  "poll": {
+    "run_id": 12,
+    "question": "Which are pure functions?",
+    "kind": "multi",
+    "open": true,
+    "options": [
+      { "id": 101, "label": "square", "exclusive": false },
+      { "id": 102, "label": "random", "exclusive": false },
+      { "id": 103, "label": "string-append", "exclusive": false }
+    ]
+  },
+  "my_vote": [101, 103],
+  "qa": { "enabled": false, "open": false, "started": false, "questions": [] }
+}

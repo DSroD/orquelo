@@ -1,0 +1,27 @@
+{
+  "session": { "code": "abcde23456", "label": "Class A", "started_at": "2026-11-15T10:00:00.000Z", "ended_at": "2026-11-15T11:30:00.000Z" },
+  "presentation": { "id": 7, "title": "Intro to HtDP" },
+  "summary": { "unique_voters": 28, "peak_audience": 31, "runs": 2, "avg_participation": 0.85, "median_seconds_to_vote": 12.5, "changed_votes": 5, "changed_voters": 4 },
+  "runs": [
+    {
+      "run_id": 12, "poll_id": 3, "slide": 5, "question": "Which are pure functions?", "kind": "multi",
+      "opened_at": "2026-11-15T10:20:00.000Z", "closed_at": "2026-11-15T10:25:00.000Z",
+      "total_voters": 27, "peak_audience": 30, "participation": 0.9, "median_seconds_to_vote": 14.5, "changed_voters": 3,
+      "options": [
+        { "id": 101, "idx": 0, "label": "square", "count": 21 },
+        { "id": 102, "idx": 1, "label": "random", "count": 3 },
+        { "id": 103, "idx": 2, "label": "string-append", "count": 18 }
+      ]
+    },
+    {
+      "run_id": 13, "poll_id": 4, "slide": 8, "question": "Is (random 10) pure?", "kind": "single",
+      "opened_at": "2026-11-15T10:40:00.000Z", "closed_at": "2026-11-15T10:43:00.000Z",
+      "total_voters": 24, "peak_audience": 30, "participation": 0.8, "median_seconds_to_vote": 9.5, "changed_voters": 1,
+      "options": [
+        { "id": 104, "idx": 0, "label": "yes", "count": 3 },
+        { "id": 105, "idx": 1, "label": "no", "count": 21 }
+      ]
+    }
+  ],
+  "qa": { "enabled": false, "questions": [] }
+}

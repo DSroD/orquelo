@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Runs "$@" against a throwaway S3 server (versitygw, posix backend) with an empty bucket.
+set -euo pipefail
+base="${TMPDIR:-/tmp}"
+dir="$(mktemp -d "${base%/}/orquelo-s3.XXXXXX")"
+port=7079
+endpoint="http://127.0.0.1:$port"
+pid=""
+stop() { [ -z "$pid" ] || kill "$pid" 2>/dev/null || true; rm -rf "$dir"; }
+trap stop EXIT
+
+mkdir "$dir/root" "$dir/meta"
+# --sidecar keeps object metadata in files, so no extended-attribute support is needed
+versitygw --access orquelo --secret orqueloorquelo --port "127.0.0.1:$port" --quiet \
+  posix --sidecar "$dir/meta" "$dir/root" >"$dir/s3.log" 2>&1 &
+pid=$!
+
+for _ in $(seq 100); do
+  curl -s -o /dev/null "$endpoint" && break
+  kill -0 "$pid" 2>/dev/null || { cat "$dir/s3.log" >&2; exit 1; }
+  sleep 0.1
+done
+curl -sf -X PUT --aws-sigv4 "aws:amz:us-east-1:s3" --user orquelo:orqueloorquelo \
+  "$endpoint/orquelo-test" >/dev/null
+
+export STORAGE=s3 S3_ENDPOINT="$endpoint" S3_REGION=us-east-1 S3_BUCKET=orquelo-test \
+  S3_ACCESS_KEY_ID=orquelo S3_SECRET_ACCESS_KEY=orqueloorquelo S3_PATH_STYLE=1
+"$@"

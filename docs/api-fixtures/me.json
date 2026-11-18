@@ -1,0 +1,14 @@
+{
+  "user": {
+    "id": 3,
+    "email": "teacher@example.org",
+    "name": "Ada Teacher"
+  },
+  "membership": {
+    "plan": "free",
+    "status": "active",
+    "storage_used": 2097152,
+    "storage_quota": 33554432,
+    "max_upload_bytes": 5242880
+  }
+}

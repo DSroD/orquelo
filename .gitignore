@@ -1,0 +1,11 @@
+result
+result-*
+node_modules/
+web/dist/
+compiled/
+.env
+*.tar.gz
+data/
+.impeccable/review/
+e2e/test-results/
+e2e/playwright-report/

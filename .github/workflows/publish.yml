@@ -1,0 +1,90 @@
+name: Publish image
+# On a vX.Y.Z tag that is on main: test and build the image for amd64 and arm64, run scripts/e2e-image on each,
+# push ghcr.io/dsrod/orquelo:X.Y.Z-<arch>, then the multi-arch tags X.Y.Z, X.Y and latest.
+# A pre-release tag (vX.Y.Z-rc.1) gets only its own tag.
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: read
+concurrency:
+  group: publish-${{ github.ref }}
+env:
+  REPO: ghcr.io/dsrod/orquelo
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.tags.outputs.version }}
+      tags: ${{ steps.tags.outputs.tags }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: The tag is on main
+        run: git merge-base --is-ancestor "$GITHUB_SHA" origin/main || { echo "tag is not on main"; exit 1; }
+      - name: Image tags
+        id: tags
+        env:
+          REF: ${{ github.ref_name }}
+        run: |
+          if [[ "$REF" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+            echo "tags=${REF#v} ${BASH_REMATCH[1]}.${BASH_REMATCH[2]} latest" >> "$GITHUB_OUTPUT"
+          elif [[ "$REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-[0-9A-Za-z.]+$ ]]; then
+            echo "tags=${REF#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag $REF is not vX.Y.Z or vX.Y.Z-pre"; exit 1
+          fi
+          echo "version=${REF#v}" >> "$GITHUB_OUTPUT"
+
+  image:
+    needs: check
+    strategy:
+      matrix:
+        include:
+          - { runner: ubuntu-24.04, system: x86_64-linux, arch: amd64 }
+          - { runner: ubuntu-24.04-arm, system: aarch64-linux, arch: arm64 }
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: NixOS/nix-installer-action@62c1943b776c509394b550f3f983adc14e9212d6 # main 2026-08-16
+      - name: Server tests (unit + Postgres and S3 integration)
+        run: nix build .#checks.${{ matrix.system }}.server -L --no-link
+      - name: Build the image
+        run: nix build .#packages.${{ matrix.system }}.image -L -o image.tar.gz
+      - name: End-to-end test of the image
+        run: |
+          docker load < image.tar.gz
+          scripts/e2e-image orquelo:local
+      - name: Push ${{ matrix.arch }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.check.outputs.version }}-${{ matrix.arch }}
+        run: |
+          nix shell --inputs-from . nixpkgs#skopeo -c skopeo copy \
+            --dest-creds "$GITHUB_ACTOR:$GH_TOKEN" docker-archive:image.tar.gz "docker://$REPO:$TAG"
+
+  manifest:
+    needs: [check, image]
+    runs-on: ubuntu-24.04
+    permissions:
+      packages: write
+    steps:
+      - name: Multi-arch tags
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.check.outputs.version }}
+          TAGS: ${{ needs.check.outputs.tags }}
+        run: |
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          args=()
+          for t in $TAGS; do args+=(-t "$REPO:$t"); done
+          docker buildx imagetools create "${args[@]}" "$REPO:$VERSION-amd64" "$REPO:$VERSION-arm64"
+          docker buildx imagetools inspect "$REPO:$VERSION"

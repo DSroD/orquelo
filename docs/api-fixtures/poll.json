@@ -1,0 +1,32 @@
+{
+  "id": 3,
+  "presentation_id": 7,
+  "slide": 5,
+  "position": 1,
+  "question": "Which are pure functions?",
+  "kind": "multi",
+  "options": [
+    {
+      "id": 101,
+      "idx": 0,
+      "label": "square",
+      "exclusive": false
+    },
+    {
+      "id": 102,
+      "idx": 1,
+      "label": "random",
+      "exclusive": false
+    },
+    {
+      "id": 103,
+      "idx": 2,
+      "label": "string-append",
+      "exclusive": false
+    }
+  ],
+  "has_runs": false,
+  "show_results": false,
+  "archived_at": null,
+  "allow_additional_answers": false
+}

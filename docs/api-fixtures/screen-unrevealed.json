@@ -1,0 +1,41 @@
+{
+  "session": {
+    "code": "abcde23456",
+    "label": "Class A"
+  },
+  "presentation": {
+    "id": 7,
+    "title": "Intro to HtDP",
+    "page_count": 42
+  },
+  "join_url": "https://orquelo.com/7/abcde23456",
+  "stage": {
+    "slide": 5,
+    "overlay": {
+      "type": "poll",
+      "run_id": 12,
+      "question": "Which are pure functions?",
+      "kind": "multi",
+      "open": true,
+      "revealed": false,
+      "total_voters": 27,
+      "options": [
+        {
+          "id": 101,
+          "label": "square",
+          "count": null
+        },
+        {
+          "id": 102,
+          "label": "random",
+          "count": null
+        },
+        {
+          "id": 103,
+          "label": "string-append",
+          "count": null
+        }
+      ]
+    }
+  }
+}

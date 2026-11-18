@@ -1,0 +1,75 @@
+{
+  "session": {
+    "code": "abcde23456",
+    "screen_code": "vwxyz76543",
+    "label": "Class A",
+    "started_at": "2026-11-15T10:00:00.000Z",
+    "ended_at": null
+  },
+  "presentation": {
+    "id": 7,
+    "title": "Intro to HtDP",
+    "page_count": 42
+  },
+  "audience_url": "https://orquelo.com/7/abcde23456",
+  "screen_url": "https://orquelo.com/screen/7/vwxyz76543",
+  "connections": {
+    "audience": 28,
+    "screen": 1
+  },
+  "stage": {
+    "slide": 5,
+    "overlay": {
+      "type": "poll",
+      "run_id": 12,
+      "revealed": false
+    }
+  },
+  "open_run": {
+    "run_id": 12,
+    "poll_id": 3,
+    "question": "Which are pure functions?",
+    "kind": "multi",
+    "opened_at": "2026-11-15T10:20:00.000Z",
+    "options": [
+      {
+        "id": 101,
+        "label": "square",
+        "count": 21,
+        "exclusive": false
+      },
+      {
+        "id": 102,
+        "label": "random",
+        "count": 3,
+        "exclusive": false
+      },
+      {
+        "id": 103,
+        "label": "string-append",
+        "count": 18,
+        "exclusive": false
+      }
+    ],
+    "total_voters": 27,
+    "allow_additional_answers": false
+  },
+  "runs": [
+    {
+      "run_id": 12,
+      "poll_id": 3,
+      "question": "Which are pure functions?",
+      "kind": "multi",
+      "opened_at": "2026-11-15T10:20:00.000Z",
+      "closed_at": null,
+      "total_voters": 27
+    }
+  ],
+  "qa": {
+    "enabled": false,
+    "open": false,
+    "questions": [],
+    "selected_question_id": null,
+    "started": false
+  }
+}

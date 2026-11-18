@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# usage: lint-migrations DIR BASE_REF
+# Migrations are append-only. Fails when, relative to BASE_REF, a migration in DIR was modified, deleted
+# or renamed, or a new one has a bad name, a duplicate timestamp, or a timestamp not newer than the
+# newest on BASE_REF. Only files named YYYYMMDDHHMMSS_name.sql count as history, so the one-off rename
+# of 001_init.sql to its timestamped name is exempt. Run it from inside the git repository.
+set -euo pipefail
+[ $# -eq 2 ] || { echo "usage: lint-migrations DIR BASE_REF" >&2; exit 2; }
+dir=${1%/}; base=$2
+pattern='^[0-9]{14}_[a-z0-9_]+\.sql$'
+fail=0
+err() { echo "lint-migrations: $*" >&2; fail=1; }
+
+git rev-parse --verify --quiet "$base^{commit}" >/dev/null || { echo "lint-migrations: unknown ref $base" >&2; exit 2; }
+
+# files in DIR on BASE_REF that count as history (a missing DIR has none)
+mapfile -t old < <(git ls-tree --name-only "$base" -- "$dir/" | xargs -r -n1 basename | grep -E "$pattern" || true)
+mapfile -t now < <(find "$dir" -maxdepth 1 -name '*.sql' -exec basename {} \; 2>/dev/null | sort)
+
+newest=0
+for f in "${old[@]}"; do
+  [ -f "$dir/$f" ] || { err "$f was deleted or renamed"; continue; }
+  git diff --quiet "$base" -- "$dir/$f" || err "$f was modified"
+  [ "${f%%_*}" -gt "$newest" ] 2>/dev/null && newest=${f%%_*}
+done
+
+declare -A seen
+for f in "${now[@]}"; do
+  printf '%s\n' "${old[@]}" | grep -qxF "$f" && continue
+  if ! [[ $f =~ $pattern ]]; then err "$f: bad name (want YYYYMMDDHHMMSS_name.sql)"; continue; fi
+  ts=${f%%_*}
+  [ "$ts" -gt "$newest" ] || err "$f is not newer than the newest migration on $base ($newest)"
+  [ -z "${seen[$ts]:-}" ] || err "$f has the same timestamp as ${seen[$ts]}"
+  seen[$ts]=$f
+done
+exit $fail

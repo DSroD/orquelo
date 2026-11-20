@@ -11,7 +11,15 @@ describe("quota text", () => {
   it("formats MB with at most one decimal", () => {
     expect(mb(2097152)).toBe("2");
     expect(mb(1572864)).toBe("1.5");
-    expect(usage(membership)).toBe("2 / 32 MB");
+  });
+
+  it("shows storage usage and the percentage of the quota", () => {
+    expect(usage(membership)).toBe("2 MB / 32 MB · 6% used");
+    const pro = { ...membership, storage_quota: 10_000_000_000 };
+    expect(usage(pro)).toBe("2 MB / 10 GB · <1% used");
+    expect(usage({ ...pro, storage_used: 3_500_000_000 })).toBe("3.5 GB / 10 GB · 35% used");
+    expect(usage({ ...pro, storage_used: 0 })).toBe("0 MB / 10 GB · 0% used");
+    expect(usage({ ...membership, storage_quota: 0 })).toBe("2 MB / 0 MB");
   });
 
   it("omits the quota when it is unlimited", () => {

@@ -22,7 +22,7 @@ describe("Deck list", () => {
   it("shows only storage usage against quota", () => {
     stubFetch(() => []);
     render(List, { me });
-    expect(screen.getByLabelText("Storage used").textContent).toBe("2 / 32 MB");
+    expect(screen.getByLabelText("Storage used").textContent).toBe("2 MB / 32 MB · 6% used");
     expect(screen.queryByText(me.user.email!)).toBeNull();
   });
 

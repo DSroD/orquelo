@@ -23,7 +23,7 @@ test("A deck that would exceed the storage quota is refused", async ({ cast }) =
   await ada.opensDeckList();
   await ada.triesToUploadDeck("Second half", { padTo: 1.6 * MiB });
   await ada.seesUploadError("Not enough storage left");
-  await ada.seesStorageUsed("1.6 / 3 MB");
+  await ada.seesStorageUsed("1.6 MB / 3 MB · 53% used");
 });
 
 test("A PDF over the per-deck limit is refused", async ({ cast }) => {

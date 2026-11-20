@@ -2,13 +2,25 @@ import { ApiError } from "./api";
 import type { Me } from "./types";
 
 const MIB = 1024 * 1024;
+const GB = 1_000_000_000;
+const oneDecimal = (n: number): string => String(Math.round(n * 10) / 10);
 
 /** Bytes as MB with at most one decimal: 2097152 -> "2", 1572864 -> "1.5". */
-export const mb = (bytes: number): string => String(Math.round((bytes / MIB) * 10) / 10);
+export const mb = (bytes: number): string => oneDecimal(bytes / MIB);
 
-/** Storage strip text, e.g. "2 / 32 MB"; just "2 MB used" when the quota is unlimited. */
-export const usage = (m: Me["membership"]): string =>
-  m.storage_quota === null ? `${mb(m.storage_used)} MB used` : `${mb(m.storage_used)} / ${mb(m.storage_quota)} MB`;
+const storageSize = (bytes: number): string =>
+  bytes >= GB ? `${oneDecimal(bytes / GB)} GB` : `${mb(bytes)} MB`;
+
+/** Shows usage against the quota, including the percentage when the quota is positive. */
+export function usage(m: Me["membership"]): string {
+  const used = storageSize(m.storage_used);
+  if (m.storage_quota === null) return `${used} used`;
+  const total = `${used} / ${storageSize(m.storage_quota)}`;
+  if (m.storage_quota === 0) return total;
+  const percent = Math.floor(m.storage_used * 100 / m.storage_quota);
+  const label = percent === 0 && m.storage_used > 0 ? "<1%" : `${percent}%`;
+  return `${total} · ${label} used`;
+}
 
 export const tooLargeMessage = (m: Me["membership"]): string => `Deck over the ${mb(m.max_upload_bytes)} MB per-deck limit`;
 

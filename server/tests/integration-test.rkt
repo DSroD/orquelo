@@ -42,7 +42,7 @@
 
 (define (as-user method path #:json [j #f] #:data [d #f] #:headers [h '()])
   (http method path #:json j #:data d #:cookies (list user-cookie) #:headers h))
-(define (pid-cookie id) (string-append "orquelo_pid=" id))
+(define (pid-cookie code id) (format "orquelo_participant=~a.~a" code id))
 
 ;; String -> String
 ;; the session cookie of `email`, created if need be and logged in with a password
@@ -267,24 +267,64 @@
   (define p2 (random-uuid-v4))
   (define p3 (random-uuid-v4))
 
-  (test-case "public session info, cookie, wrong code, wrong presentation"
+  (test-case "public session info is cookie-free and checks code and presentation"
     (define r (http "GET" (path codeA "")))
     (check-equal? (resp-status r) 200)
     (check-equal? (resp-json r) (hasheq 'presentation (hasheq 'id pid 'title "Intro" 'page_count 10)
                                         'session (hasheq 'code codeA 'label "Class A")))
-    (define c (resp-header r "Set-Cookie"))
-    (check-regexp-match #px"^orquelo_pid=[0-9a-f-]{36}; Max-Age=31536000; Path=/; HttpOnly; SameSite=Lax" c)
-    (check-equal? (resp-headers-all (http "GET" (path codeA "") #:cookies (list (pid-cookie p1))) "Set-Cookie") '())
+    (check-equal? (resp-headers-all r "Set-Cookie") '())
     (check-equal? (resp-status (http "GET" (path "zzzzzzzzzz" ""))) 404)
     (check-equal? (resp-status (http "GET" (path "bad" ""))) 404)
     (check-equal? (resp-status (http "GET" (format "/api/s/~a/~a" (+ pid 1) codeA))) 404)
     (check-equal? (resp-status (http "GET" (path codeA "/stream?role=moderator"))) 400)
     (check-equal? (resp-status (http "GET" (path codeA "/stream"))) 400))
 
+  (test-case "cross-session cookies require explicit consent and can be withdrawn"
+    (define url "/api/s/cookies")
+    (define legacy (list (format "orquelo_pid=~a" p1)))
+    (check-equal? (resp-json (http "GET" url #:cookies legacy)) (hasheq 'remember 'null))
+    (check-equal? (resp-status (http "POST" url #:json (hasheq 'remember #t) #:origin #f)) 403)
+    (define (choose remember? cookies)
+      (define r (http "POST" url #:json (hasheq 'remember remember?) #:cookies cookies))
+      (check-equal? (resp-json r) (hasheq 'remember remember?))
+      (check-equal? (resp-header r "Cache-Control") "no-store")
+      (car (string-split (resp-header r "Set-Cookie") ";")))
+    (define consent-pid (hash-ref (resp-json (upload! "Cookie checks" "1" #"%PDF-test")) 'id))
+    (define consent-deck (format "/api/decks/~a" consent-pid))
+    (define (start label)
+      (hash-ref (resp-json (as-user "POST" (string-append consent-deck "/sessions") #:json (hasheq 'label label))) 'code))
+    (define first-session (start "First"))
+    (define second-session (start "Second"))
+    (define (stream-cookie code cookies)
+      (define header #f)
+      (define-values (_status in next!)
+        (sse-open (format "/api/s/~a/~a/stream?role=audience" consent-pid code) #:cookies cookies
+                  #:on-headers (λ (r) (set! header (resp-header r "Set-Cookie")))))
+      (void (next!))
+      (close-input-port in)
+      (check-regexp-match (regexp (format "Path=/api/s/~a/~a;" consent-pid code)) header)
+      (car (string-split header ";")))
+    (define (identifier cookie) (cadr (string-split cookie ".")))
+    (define local-a (stream-cookie first-session legacy))
+    (check-not-equal? (identifier local-a) p1)
+    (check-not-equal? (identifier local-a) (identifier (stream-cookie second-session (list local-a))))
+    (define allowed (choose #t legacy))
+    (check-equal? (resp-json (http "GET" url #:cookies (list allowed))) (hasheq 'remember #t))
+    (define shared (identifier (stream-cookie first-session (list allowed))))
+    (check-equal? (identifier (stream-cookie second-session (list allowed))) shared)
+    (define refused (choose #f (list allowed)))
+    (check-equal? refused "orquelo_remember_participant=off")
+    (check-equal? (resp-json (http "GET" url #:cookies (list refused))) (hasheq 'remember #f))
+    (check-not-equal? (identifier (stream-cookie second-session (list refused))) shared)
+    (for ([code (list first-session second-session)])
+      (check-equal? (resp-status (post-moderator code "/end")) 204))
+    (check-equal? (resp-status (as-user "DELETE" consent-deck)) 204))
+
   (test-case "slides.pdf requires the screen code"
     (define r (http "GET" (spath scrA "/slides.pdf")))
     (check-equal? (resp-status r) 200)
     (check-equal? (resp-header r "Cache-Control") "private, max-age=3600")
+    (check-equal? (resp-headers-all r "Set-Cookie") '())
     (check-equal? (bytes-length (resp-body r)) (bytes-length pdf2mb))
     (check-equal? (resp-status (http "GET" (spath "zzzzzzzzzz" "/slides.pdf"))) 404)
     ;; the audience code gets no PDF, on either path
@@ -306,11 +346,11 @@
     (check-equal? (resp-status (http "GET" (format "/api/screen/-1/~a" scrA))) 404))
 
   ;; streams: A audience x2, A screen, A moderator, B audience, B screen
-  (define-values (sa1 ina1 next-a1) (sse-open (path codeA "/stream?role=audience") #:cookies (list (pid-cookie p1))))
-  (define-values (sa2 ina2 next-a2) (sse-open (path codeA "/stream?role=audience") #:cookies (list (pid-cookie p2))))
+  (define-values (sa1 ina1 next-a1) (sse-open (path codeA "/stream?role=audience") #:cookies (list (pid-cookie codeA p1))))
+  (define-values (sa2 ina2 next-a2) (sse-open (path codeA "/stream?role=audience") #:cookies (list (pid-cookie codeA p2))))
   (define-values (ss ins next-screen) (sse-open (spath scrA "/stream")))
   (define-values (sad inad next-moderator) (sse-open (adm codeA "/stream") #:cookies (list user-cookie)))
-  (define-values (sb1 inb1 next-b1) (sse-open (path codeB "/stream?role=audience") #:cookies (list (pid-cookie p1))))
+  (define-values (sb1 inb1 next-b1) (sse-open (path codeB "/stream?role=audience") #:cookies (list (pid-cookie codeB p1))))
   (define-values (sbs inbs next-bscreen) (sse-open (spath scrB "/stream")))
 
   (test-case "streams: headers and initial snapshots"
@@ -383,7 +423,7 @@
     (check-equal? (hash-ref (resp-json (post-moderator codeB "/poll/open" (hasheq 'poll_id 999999))) 'error) "not_found"))
 
   (test-case "vote validation"
-    (define (vote code j) (http "POST" (path code "/vote") #:json j #:cookies (list (pid-cookie p1))))
+    (define (vote code j) (http "POST" (path code "/vote") #:json j #:cookies (list (pid-cookie code p1))))
     (define ids (opt-ids poll))
     (check-equal? (hash-ref (resp-json (vote codeA (hasheq 'run_id run-id 'option_ids '()))) 'field) "option_ids")
     (check-equal? (resp-status (vote codeA (hasheq 'run_id run-id 'option_ids (list (car ids) (car ids))))) 422)
@@ -401,7 +441,7 @@
 
   (test-case "vote in A: voter and moderator see it, others do not"
     (define ids (opt-ids poll))
-    (define r (http "POST" (path codeA "/vote") #:json (hasheq 'run_id run-id 'option_ids (list (cadr ids))) #:cookies (list (pid-cookie p1))))
+    (define r (http "POST" (path codeA "/vote") #:json (hasheq 'run_id run-id 'option_ids (list (cadr ids))) #:cookies (list (pid-cookie codeA p1))))
     (check-equal? (resp-status r) 200)
     (check-equal? (resp-json r) (hasheq 'run_id run-id 'option_ids (list (cadr ids))))
     (check-equal? (hash-ref (next-snapshot next-a1) 'my_vote) (list (cadr ids)))
@@ -416,7 +456,7 @@
 
   (test-case "cross-session isolation: A's run posted to B"
     (define ids (opt-ids poll))
-    (define r (http "POST" (path codeB "/vote") #:json (hasheq 'run_id run-id 'option_ids (list (car ids))) #:cookies (list (pid-cookie p3))))
+    (define r (http "POST" (path codeB "/vote") #:json (hasheq 'run_id run-id 'option_ids (list (car ids))) #:cookies (list (pid-cookie codeB p3))))
     (check-equal? (resp-status r) 409)
     (check-equal? (hash-ref (resp-json r) 'error) "poll_not_open")
     (check-equal? (drain next-b1) '())
@@ -428,7 +468,7 @@
 
   (test-case "change vote, second voter, reveal shows counts on screen only"
     (define ids (opt-ids poll))
-    (define (vote p id) (http "POST" (path codeA "/vote") #:json (hasheq 'run_id run-id 'option_ids (list id)) #:cookies (list (pid-cookie p))))
+    (define (vote p id) (http "POST" (path codeA "/vote") #:json (hasheq 'run_id run-id 'option_ids (list id)) #:cookies (list (pid-cookie codeA p))))
     (check-equal? (resp-status (vote p1 (car ids))) 200)
     (check-equal? (resp-status (vote p2 (car ids))) 200)
     (drain next-a1) (drain next-a2) (drain next-screen) (drain next-moderator)
@@ -471,7 +511,7 @@
     (check-equal? (hash-ref adm-closed 'open_run) 'null)
     (check-equal? (hash-ref (car (hash-ref adm-closed 'runs)) 'run_id) run-id)
     (check-equal? (resp-status (post-moderator codeA "/poll/close")) 409)
-    (define r (http "POST" (path codeA "/vote") #:json (hasheq 'run_id run-id 'option_ids (list (car (opt-ids poll)))) #:cookies (list (pid-cookie p3))))
+    (define r (http "POST" (path codeA "/vote") #:json (hasheq 'run_id run-id 'option_ids (list (car (opt-ids poll)))) #:cookies (list (pid-cookie codeA p3))))
     (check-equal? (resp-status r) 409))
 
   (test-case "poll immutability, duplicate, delete guards"
@@ -517,9 +557,9 @@
     (check-equal? (hash-ref (hash-ref s 'poll) 'run_id) run2)
     (check-equal? (hash-ref s 'my_vote) 'null)
     ;; the old run is no longer votable
-    (check-equal? (resp-status (http "POST" (path codeA "/vote") #:json (hasheq 'run_id run-id 'option_ids (list (car (opt-ids poll)))) #:cookies (list (pid-cookie p3)))) 409)
+    (check-equal? (resp-status (http "POST" (path codeA "/vote") #:json (hasheq 'run_id run-id 'option_ids (list (car (opt-ids poll)))) #:cookies (list (pid-cookie codeA p3)))) 409)
     (define mids (opt-ids multi))
-    (check-equal? (resp-status (http "POST" (path codeA "/vote") #:json (hasheq 'run_id run2 'option_ids (list (car mids) (caddr mids))) #:cookies (list (pid-cookie p3)))) 200))
+    (check-equal? (resp-status (http "POST" (path codeA "/vote") #:json (hasheq 'run_id run2 'option_ids (list (car mids) (caddr mids))) #:cookies (list (pid-cookie codeA p3)))) 200))
 
   (test-case "a past run can be shown again with its stored counts; the open run's votes do not move it"
     (define adm (last-snapshot next-moderator))
@@ -534,7 +574,7 @@
     (check-equal? (hash-ref (overlay-of (last-snapshot next-moderator)) 'run_id) run-id)
     ;; a vote on the open run leaves the shown past run alone
     (define mids (opt-ids multi))
-    (check-equal? (resp-status (http "POST" (path codeA "/vote") #:json (hasheq 'run_id run2 'option_ids (list (cadr mids))) #:cookies (list (pid-cookie p2)))) 200)
+    (check-equal? (resp-status (http "POST" (path codeA "/vote") #:json (hasheq 'run_id run2 'option_ids (list (cadr mids))) #:cookies (list (pid-cookie codeA p2)))) 200)
     (check-false (last-snapshot next-screen))
     (check-equal? (hash-ref (hash-ref (last-snapshot next-moderator) 'open_run) 'total_voters) 2)
     ;; reveal/hide act on the shown run
@@ -576,7 +616,7 @@
   (test-case "resume: the newest closed run reopens with its votes; anything else is refused"
     (define rp (new-poll!))
     (define (resume id) (post-moderator codeA "/poll/resume" (hasheq 'run_id id)))
-    (define (vote! pid option) (http "POST" (path codeA "/vote") #:json (hasheq 'run_id rid 'option_ids (list option)) #:cookies (list (pid-cookie pid))))
+    (define (vote! pid option) (http "POST" (path codeA "/vote") #:json (hasheq 'run_id rid 'option_ids (list option)) #:cookies (list (pid-cookie codeA pid))))
     (define rid (hash-ref (resp-json (post-moderator codeA "/poll/open" (hasheq 'poll_id (hash-ref rp 'id)))) 'run_id))
     (define ids (opt-ids rp))
     (check-equal? (hash-ref (resp-json (resume rid)) 'error) "run_not_resumable")
@@ -928,7 +968,7 @@
                                     #:json (hasheq 'slide 1 'question "Q" 'kind "single" 'options (option-inputs '("a" "b"))))))
     (define fcode (hash-ref (resp-json (as-user "POST" (string-append fpath "/sessions") #:json (hasheq 'label "L"))) 'code))
     (define run (hash-ref (resp-json (post-moderator fcode "/poll/open" (hasheq 'poll_id (hash-ref fpoll 'id)))) 'run_id))
-    (check-equal? (status-of (http "POST" (format "/api/s/~a/~a/vote" fid fcode) #:cookies (list (pid-cookie p1))
+    (check-equal? (status-of (http "POST" (format "/api/s/~a/~a/vote" fid fcode) #:cookies (list (pid-cookie fcode p1))
                                    #:json (hasheq 'run_id run 'option_ids (list (car (opt-ids fpoll))))))
                   200)
     (check-equal? (status-of (as-user "PUT" (string-append fpath "/shares/bob@example.org")
@@ -960,13 +1000,13 @@
     (define (public-url suffix) (format "/api/s/~a/~a~a" qpid code suffix))
     (define (control method suffix [body #f]) (as-user method (session-url suffix) #:json body))
     (define (ask text who)
-      (http "POST" (public-url "/qa") #:json (hasheq 'text text) #:cookies (list (pid-cookie who))))
+      (http "POST" (public-url "/qa") #:json (hasheq 'text text) #:cookies (list (pid-cookie code who))))
     (check-equal? (resp-status (ask "Before opening" p1)) 409)
     (check-equal? (resp-status (control "POST" "/qa" (hasheq 'open #t))) 204)
     ;; Deck changes do not disable Q&A in an already-created session.
     (check-equal? (resp-status (owner "PUT" "/qa" (hasheq 'enabled #f))) 204)
-    (define-values (_a ai an) (sse-open (string-append (public-url "/stream") "?role=audience") #:cookies (list (pid-cookie p1))))
-    (define-values (_b bi bn) (sse-open (string-append (public-url "/stream") "?role=audience") #:cookies (list (pid-cookie p2))))
+    (define-values (_a ai an) (sse-open (string-append (public-url "/stream") "?role=audience") #:cookies (list (pid-cookie code p1))))
+    (define-values (_b bi bn) (sse-open (string-append (public-url "/stream") "?role=audience") #:cookies (list (pid-cookie code p2))))
     (next-snapshot an) (next-snapshot bn)
     (define question-response (ask "  Why is this pure?  " p1))
     (check-equal? (resp-status question-response) 201)
@@ -1016,7 +1056,7 @@
     (define rid (hash-ref opened 'run_id))
     (define original (hash-ref opened 'options))
     (define ids (map (λ (o) (hash-ref o 'id)) original))
-    (define (cast ids) (http "POST" (public-url "/vote") #:cookies (list (pid-cookie p1))
+    (define (cast ids) (http "POST" (public-url "/vote") #:cookies (list (pid-cookie code p1))
                              #:json (hasheq 'run_id rid 'option_ids ids)))
     (check-equal? (resp-status (cast ids)) 422)
     (check-equal? (resp-status (cast (list (cadr ids)))) 200)

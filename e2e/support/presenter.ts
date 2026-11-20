@@ -30,9 +30,11 @@ export class Presenter {
   });
   triesToSignIn = (pw: string) => step(`${this.email} tries to sign in`, () => this.login.submit(this.page, this.email, pw));
   seesSignInError = (text: Text) => step("sees a sign-in error", () => this.login.expectError(this.page, text));
-  seesTheirAccount = () => step("sees their email and the Account link", async () => {
-    await expect(this.page.getByText(this.email)).toBeVisible();
-    await expect(this.page.getByRole("link", { name: "Account" })).toBeVisible();
+  seesTheirAccount = () => step("sees their email on the Account page", async () => {
+    await expect(this.page.getByText(this.email, { exact: true })).toHaveCount(0);
+    await this.page.getByRole("link", { name: "Account", exact: true }).click();
+    await expect(this.page.getByText(this.email, { exact: true })).toBeVisible();
+    await expect(this.page.getByRole("navigation", { name: "Path" })).toHaveCount(0);
   });
   isSignedOut = () => step(`${this.email} is signed out`, async () => {
     await this.page.goto("/decks");

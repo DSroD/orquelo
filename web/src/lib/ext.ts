@@ -9,10 +9,16 @@ export interface ExtRoute {
   load: Lazy;
 }
 
-/** What an edition plugs into the SPA (`$ext`): extra pages, the login page, an optional home page and whether accounts have passwords. */
+export interface NavigationLink {
+  label: string;
+  href: string;
+  when?: "signed-in" | "signed-out";
+}
+
+/** The routes, pages and navigation an edition plugs into the SPA. */
 export interface Extension {
   routes: readonly ExtRoute[];
   Login: Lazy;
   Home?: Lazy;
-  passwordAccount: boolean;
+  navigation?: readonly NavigationLink[];
 }

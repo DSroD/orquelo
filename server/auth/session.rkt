@@ -2,7 +2,7 @@
 ;; User session cookie, participant cookie, signed-cookie helpers and the safe return_to.
 (require racket/contract/base racket/list racket/match racket/string net/cookies/server (except-in web-server/http make-cookie) web-server/http/id-cookie
          "../config.rkt" "../domain.rkt" "../live/codes.rkt")
-(provide user-cookie-name participant-cookie-name
+(provide user-cookie-name
          (contract-out
           [struct login-token ([user-id id/c] [epoch natural-number/c])]
           [signed-cookie-header (->* (config? string? string? #:max-age exact-nonnegative-integer?) (#:path string?) header?)]
@@ -11,12 +11,20 @@
           [request-login-token (-> request? config? (or/c login-token? #f))]
           [user-cookie (-> id/c natural-number/c config? header?)]
           [clear-user-cookie (-> header?)]
-          [request-participant (-> request? (or/c string? #f))]
-          [participant-cookie (-> string? config? header?)]
+          [request-participant (-> request? string? (or/c string? #f))]
+          [participant-cookie (-> string? id/c string? config? header?)]
+          [remembered-participant (-> request? config? (or/c string? #f))]
+          [participant-cookie-choice (-> request? config? (or/c boolean? 'null))]
+          [participant-choice-cookie (-> request? config? boolean? header?)]
+          [legacy-participant-headers (-> request? (listof header?))]
           [safe-return-to (-> any/c string?)]))
 
 (define user-cookie-name "orquelo_user")
-(define participant-cookie-name "orquelo_pid")
+(define participant-cookie-name "orquelo_participant")
+(define remembered-cookie-name "orquelo_remember_participant")
+(define legacy-cookie-name "orquelo_pid")
+(define remember-path "/api/s")
+(define remember-max-age (* 365 24 60 60))
 (define user-max-age 43200)
 
 ;; Cookie -> Header
@@ -61,18 +69,55 @@
 (define (clear-user-cookie) (clear-cookie-header* user-cookie-name))
 
 ;; ------------------------------------------------------------------ participant
-;; Request -> (or String #f)
-;; the participant UUID from the cookie, if well-formed
-(define (request-participant req)
-  (define c (findf (λ (c) (equal? (client-cookie-name c) participant-cookie-name)) (request-cookies req)))
-  (define v (and c (client-cookie-value c)))
-  (and (valid-uuid? v) v))
+;; Request String -> (or String #f)
+;; finds the value of a named browser cookie
+(define (cookie-value req name)
+  (define c (findf (λ (c) (equal? (client-cookie-name c) name)) (request-cookies req)))
+  (and c (client-cookie-value c)))
 
-;; String Config -> Header
-(define (participant-cookie id cfg)
+;; Request String -> (or String #f)
+;; returns the participant ID only in the session for which the cookie was issued
+(define (request-participant req code)
+  (define value (cookie-value req participant-cookie-name))
+  (match (and value (string-split value "."))
+    [(list scope id) (and (equal? scope code) (valid-uuid? id) id)]
+    [_ #f]))
+
+;; String Id String Config -> Header
+;; scopes the participant cookie to this live session's API
+(define (participant-cookie id pid code cfg)
   (set-cookie-header
-   (make-cookie participant-cookie-name id #:path "/" #:max-age 31536000 #:http-only? #t
-                #:secure? (config-secure? cfg) #:extension "SameSite=Lax")))
+   (make-cookie participant-cookie-name (string-append code "." id)
+                #:path (format "/api/s/~a/~a" pid code)
+                #:http-only? #t #:secure? (config-secure? cfg) #:extension "SameSite=Lax")))
+
+;; Request Config -> (or String #f)
+;; only a signed opt-in can supply an identifier for a new session
+(define (remembered-participant req cfg)
+  (define value (read-signed-cookie cfg remembered-cookie-name req #:shelf-life remember-max-age))
+  (and (valid-uuid? value) value))
+
+;; Request Config -> (or Boolean 'null)
+;; reports opt-in, refusal or no choice to the audience settings
+(define (participant-cookie-choice req cfg)
+  (cond [(remembered-participant req cfg) #t]
+        [(equal? (cookie-value req remembered-cookie-name) "off") #f]
+        [else 'null]))
+
+;; Request Config Boolean -> Header
+;; replaces the persistent identifier with a shared, non-identifying value on refusal
+(define (participant-choice-cookie req cfg remember?)
+  (if remember?
+      (signed-cookie-header cfg remembered-cookie-name (or (remembered-participant req cfg) (random-uuid-v4))
+                            #:path remember-path #:max-age remember-max-age)
+      (set-cookie-header
+       (make-cookie remembered-cookie-name "off" #:path remember-path #:max-age remember-max-age
+                    #:http-only? #t #:secure? (config-secure? cfg) #:extension "SameSite=Lax"))))
+
+;; Request -> [Listof Header]
+;; retires the pre-consent root cookie without reusing its identifier
+(define (legacy-participant-headers req)
+  (if (cookie-value req legacy-cookie-name) (list (clear-cookie-header* legacy-cookie-name)) '()))
 
 ;; ------------------------------------------------------------------ login helpers
 ;; Any -> String
@@ -115,14 +160,30 @@
   (test-case "Secure only on https"
     (define c (struct-copy config (cfg) [public-base-url "https://x.cz"]))
     (check-regexp-match #rx"Secure" (hdr-value (user-cookie 1 0 c)))
-    (check-regexp-match #rx"Secure" (hdr-value (participant-cookie (random-uuid-v4) c))))
-  (test-case "participant cookie"
+    (check-regexp-match #rx"Secure" (hdr-value (participant-cookie (random-uuid-v4) 1 "abcdefghij" c))))
+  (test-case "participant cookie is scoped in the browser and checked by the server"
     (define id (random-uuid-v4))
-    (define h (hdr-value (participant-cookie id (cfg))))
-    (check-regexp-match #rx"Max-Age=31536000" h)
-    (check-equal? (request-participant (req-with-cookie (format "orquelo_pid=~a" id))) id)
-    (check-false (request-participant (req-with-cookie "orquelo_pid=nope")))
-    (check-false (request-participant (req-with-cookie "x=1"))))
+    (define h (hdr-value (participant-cookie id 1 "abcdefghij" (cfg))))
+    (check-regexp-match #rx"Path=/api/s/1/abcdefghij" h)
+    (check-false (regexp-match? #rx"Max-Age" h))
+    (define req (req-with-cookie (car (string-split h "; "))))
+    (check-equal? (request-participant req "abcdefghij") id)
+    (check-false (request-participant req "klmnopqrst"))
+    (check-false (request-participant (req-with-cookie (format "orquelo_pid=~a" id)) "abcdefghij")))
+  (test-case "only explicit opt-in allows a persistent identifier"
+    (define c (cfg))
+    (define unknown (req-with-cookie (format "orquelo_pid=~a" (random-uuid-v4))))
+    (define (updated req remember?)
+      (req-with-cookie (car (string-split (hdr-value (participant-choice-cookie req c remember?)) "; "))))
+    (check-equal? (participant-cookie-choice unknown c) 'null)
+    (define opted-in (updated unknown #t))
+    (define id (remembered-participant opted-in c))
+    (check-true (valid-uuid? id))
+    (check-true (participant-cookie-choice opted-in c))
+    (check-equal? (remembered-participant (updated opted-in #t) c) id)
+    (define opted-out (updated opted-in #f))
+    (check-false (participant-cookie-choice opted-out c))
+    (check-false (remembered-participant opted-out c)))
   (test-case "return_to sanitising"
     (check-equal? (safe-return-to "/decks/3") "/decks/3")
     (check-equal? (safe-return-to "//evil.com") "/decks")

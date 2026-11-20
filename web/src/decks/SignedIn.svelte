@@ -1,17 +1,23 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
-  import { ApiError, requireUser } from "../lib/api";
+  import { ApiError } from "../lib/api";
+  import { loginRedirect } from "../lib/expired";
+  import { useSession } from "../lib/presenter-session.svelte";
   import type { Me } from "../lib/types";
 
   let { children }: { children: Snippet<[me: Me]> } = $props();
-  let me = $state<Me | null>(null);
-  let failure = $state<ApiError | Error | null>(null);
-  $effect(() => { requireUser().then((m) => (me = m), (e) => (failure = e)); });
+  const session = useSession();
+  const me = $derived(session.me);
+  const failure = $derived(session.failure);
+  $effect(() => {
+    const to = loginRedirect(failure, location.pathname);
+    if (to) location.href = to;
+  });
 </script>
 
 {#if me}
   {@render children(me)}
-{:else if failure}
+{:else if failure && me !== null}
   <main class="nf">
     {#if failure instanceof ApiError && failure.error === "suspended"}
       <h1>Account suspended</h1>

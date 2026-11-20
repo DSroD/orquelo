@@ -15,6 +15,7 @@
           [struct run-option-input ([run-id id/c] [label string?] [exclusive? boolean?])]
           [struct share-input ([edit? boolean?] [moderate? boolean?] [copy? boolean?] [results? boolean?])]
           [struct show-results-input ([show-results? boolean?])]
+          [struct participant-choice-input ([remember? boolean?])]
           [struct vote-input ([run-id id/c] [option-ids (listof id/c)])]
           [struct upload-input ([title string?] [page-count id/c] [pdf input-port?])]
           [struct login-input ([email string?] [password string?])]
@@ -58,3 +59,6 @@
 (struct qa-text-input (text))
 ;; A RunOptionInput is a (run-option-input Id String Boolean): an option appended to an open run.
 (struct run-option-input (run-id label exclusive?))
+
+;; A ParticipantChoiceInput is a (participant-choice-input Boolean): whether to remember the browser across sessions.
+(struct participant-choice-input (remember?))

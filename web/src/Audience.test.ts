@@ -82,7 +82,9 @@ describe("Audience Q&A", () => {
 
   it("keeps an unsent question when submissions close or a request fails", async () => {
     const snap = fixture<AudienceSnapshot>("audience-qa");
-    await open(snap, () => failure(429, { error: "rate_limited", message: "Wait before sending another question." }));
+    await open(snap, ({ method }) => method === "POST"
+      ? failure(429, { error: "rate_limited", message: "Wait before sending another question." })
+      : { remember: false });
     await user.click(await screen.findByRole("tab", { name: "Q&A" }));
     const input = screen.getByRole("textbox", { name: "Your question" }) as HTMLTextAreaElement;
     await user.type(input, "Please explain");

@@ -1,8 +1,6 @@
 <script lang="ts">
   import { ApiError, post } from "../lib/api";
   import { useResource } from "../lib/resource.svelte";
-  import ext from "$ext";
-  import Crumbs from "../components/Crumbs.svelte";
   import SegToggle from "../components/SegToggle.svelte";
   import { pageCountOf } from "../lib/pdf";
   import { localDate } from "../lib/time";
@@ -23,8 +21,6 @@
   const items = $derived(res.data ?? []);
   const loaded = $derived(res.data !== null);
   const error = $derived(uploadError || res.error);
-
-  const logout = async () => { await post("/auth/logout"); navigate("/login"); };
 
   async function upload(e: SubmitEvent) {
     e.preventDefault();
@@ -48,11 +44,9 @@
 <svelte:head><title>Decks · Orquelo</title></svelte:head>
 
 <div class="page">
-  <Crumbs trail={[{ label: "~ / decks" }]} />
-  <div class="bar between"><h1>Decks</h1>
-    <span class="muted data strip" aria-label="Account">
-      {me.user.email ?? me.user.name} · {#if me.membership.plan}<span class="tag">{me.membership.plan}</span> {/if}{usage(me.membership)} · {#if ext.passwordAccount}<a href="/account">Account</a> · {/if}<button class="lnk" onclick={logout}>Log out</button>
-    </span>
+  <div class="bar between">
+    <h1>Decks</h1>
+    <span class="muted data" aria-label="Storage used">{usage(me.membership)}</span>
   </div>
 
   <div class="stack">
@@ -88,7 +82,6 @@
 </div>
 
 <style>
-  .strip { overflow-wrap: anywhere; }
   .new { flex: 1; min-width: 0; }
   .new > summary { list-style: none; display: inline-flex; }
   .new > summary::-webkit-details-marker { display: none; }

@@ -37,10 +37,11 @@
   (resp (string->number (cadr (regexp-match #rx" ([0-9]+) " (bytes->string/utf-8 status)))) hdrs body))
 
 ;; SSE client: -> (values status in next-event!); next-event! -> (cons name jsexpr) | #f on timeout
-(define (sse-open path #:cookies [cookies '()])
+(define (sse-open path #:cookies [cookies '()] #:on-headers [on-headers void])
   (define-values (status hdrs in)
     (http-sendrecv "127.0.0.1" path #:port (base-port)
                    #:headers (if (pair? cookies) (list (string-append "Cookie: " (string-join cookies "; "))) '())))
+  (on-headers (resp 200 hdrs #""))
   (values status in
           (λ (#:timeout [t 1.5])
             (let loop ([lines '()])

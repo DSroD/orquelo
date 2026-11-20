@@ -5,6 +5,8 @@
          "deps.rkt" "endpoint.rkt" "inputs.rkt" "json.rkt" "lookup.rkt" "sse.rkt" "validate.rkt")
 (provide (contract-out
           [session-info handler/id-code/c]
+          [get-participant-choice (-> deps? request? response?)]
+          [set-participant-choice (-> deps? request? response?)]
           [stream-public handler/id-code/c]
           [cast-vote* handler/id-code/c]
           [submit-question* handler/id-code/c]
@@ -12,34 +14,47 @@
           [stream-screen handler/id-code/c]
           [slides-pdf handler/id-code/c]))
 
-;; Deps Request (String [Listof Header] -> Response) -> Response
-;; runs (proc participant-id extra-headers); sets the participant cookie when the request has none
-(define (with-participant d req proc)
-  (define existing (request-participant req))
-  (define id (or existing (random-uuid-v4)))
-  (proc id (if existing '() (list (participant-cookie id (deps-cfg d))))))
+;; Deps Request Id String (String [Listof Header] -> Response) -> Response
+;; keeps an existing session identity even if the visitor changes their cookie choice
+(define (with-participant d req pid code proc)
+  (define cfg (deps-cfg d))
+  (define existing (request-participant req code))
+  (define id (or existing (remembered-participant req cfg) (random-uuid-v4)))
+  (define retired (legacy-participant-headers req))
+  (proc id (if existing retired (cons (participant-cookie id pid code cfg) retired))))
+
+(define choice-headers (list (make-header #"Cache-Control" #"no-store")))
+
+(define-endpoint (get-participant-choice d req)
+  (json-response (hasheq 'remember (participant-cookie-choice req (deps-cfg d))) #:headers choice-headers))
+
+(define-endpoint (set-participant-choice d req)
+  #:json [in (participant-choice-input [remember (boolean)])]
+  (define remember? (participant-choice-input-remember? in))
+  (json-response (hasheq 'remember remember?)
+                 #:headers (append choice-headers
+                                   (list (participant-choice-cookie req (deps-cfg d) remember?))
+                                   (legacy-participant-headers req))))
 
 (define-endpoint (session-info d req pid code)
   #:need [s (public-session pid code)] [p (presentation pid)]
-  (with-participant d req
-    (λ (_ headers) (json-response (session-info->jsexpr p s) #:headers headers))))
+  (json-response (session-info->jsexpr p s)))
 
-;; Deps Request String Role -> Response
-;; the SSE stream of the session `code` for the role
-(define (stream-as d req code role)
-  (with-participant d req
-    (λ (participant headers)
-      (define h (deps-hub d))
-      (sse-response (λ () (hub-subscribe! h code role participant))
-                    (λ (sb) (hub-unsubscribe! h code sb))
-                    #:headers headers
-                    #:on-delivery (λ (secs) (observe-delivery! (deps-metrics d) role secs))))))
+;; Deps String Role String [Listof Header] -> Response
+;; subscribes the audience or projector to this live session
+(define (stream-as d code role participant headers)
+  (define h (deps-hub d))
+  (sse-response (λ () (hub-subscribe! h code role participant))
+                (λ (sb) (hub-unsubscribe! h code sb))
+                #:headers headers
+                #:on-delivery (λ (secs) (observe-delivery! (deps-metrics d) role secs))))
 
 ;; The audience stream never serves the screen role: that one needs the screen code.
 (define-endpoint (stream-public d req pid code)
   #:need [s (public-session pid code)]
   (unless (equal? (query-param req 'role) "audience") (api-error! 400 "bad_request" "role must be audience"))
-  (stream-as d req code 'audience))
+  (with-participant d req pid code
+    (λ (participant headers) (stream-as d code 'audience participant headers))))
 
 ;; Same as session-info, behind the screen code
 (define-endpoint (screen-info d req pid screen-code)
@@ -48,7 +63,7 @@
 
 (define-endpoint (stream-screen d req pid screen-code)
   #:need [s (screen-session pid screen-code)]
-  (stream-as d req (session-code s) 'screen))
+  (stream-as d (session-code s) 'screen (random-uuid-v4) '()))
 
 ;; Connection Id [Listof Id] -> Void
 ;; a single-choice poll takes exactly one option
@@ -61,7 +76,7 @@
   #:json [in (vote-input [run-id (id)] [option-ids (distinct-integers)])]
   (match-define (vote-input run-id ids) in)
   (check-choice-count! (deps-db d) run-id ids)
-  (with-participant d req
+  (with-participant d req pid code
     (λ (participant headers)
       (define result (cast-vote! (deps-db d) run-id code pid participant ids))
       (count-vote! (deps-metrics d) (if (memq result '(ok invalid)) result 'not-open))
@@ -75,15 +90,14 @@
 (define-endpoint (slides-pdf d req pid screen-code)
   #:need [s (screen-session pid screen-code)]
   (define in (need-pdf d pid))
-  (with-participant d req
-    (λ (_ headers) (pdf-response in (cons (make-header #"Cache-Control" #"private, max-age=3600") headers)))))
+  (pdf-response in (list (make-header #"Cache-Control" #"private, max-age=3600"))))
 
 ;; Deps Request Id String -> Response
 ;; accepts a private participant question while this session permits submissions.
 (define-endpoint (submit-question* d req pid code)
   #:need [s (public-session pid code)]
   #:json [in (qa-text-input [text (string 1 1000)])]
-  (with-participant d req
+  (with-participant d req pid code
     (λ (participant headers)
       (match (submit-question! (deps-db d) (session-id s) participant (qa-text-input-text in))
         ['closed (api-error! 409 "qa_not_open" "Q&A submissions are closed")]

@@ -19,29 +19,17 @@ describe("Deck list", () => {
     expect(screen.queryAllByText(/^shared/)).toHaveLength(1);
   });
 
-  it("links to the account page in the password edition", async () => {
+  it("shows only storage usage against quota", () => {
     stubFetch(() => []);
     render(List, { me });
-    expect(screen.getByRole("link", { name: "Account" }).getAttribute("href")).toBe("/account");
+    expect(screen.getByLabelText("Storage used").textContent).toBe("2 / 32 MB");
+    expect(screen.queryByText(me.user.email!)).toBeNull();
   });
 
-  it("shows plan, usage against quota and logs out", async () => {
-    const net = stubFetch(() => []);
-    render(List, { me });
-    const strip = screen.getByLabelText("Account");
-    expect(strip.textContent).toContain("free");
-    expect(strip.textContent).toContain("2 / 32 MB");
-    await user.click(screen.getByRole("button", { name: "Log out" }));
-    await vi.waitFor(() => expect(location.pathname).toBe("/login"));
-    expect(net.posts()).toEqual([{ method: "POST", url: "/auth/logout", body: {} }]);
-  });
-
-  it("shows no plan tag and no quota when the account has neither", () => {
+  it("shows storage usage without a quota", () => {
     stubFetch(() => []);
     render(List, { me: { ...me, membership: { ...me.membership, plan: null, storage_quota: null } } });
-    const strip = screen.getByLabelText("Account");
-    expect(strip.textContent).not.toContain("free");
-    expect(strip.textContent).toContain("2 MB used");
+    expect(screen.getByLabelText("Storage used").textContent).toBe("2 MB used");
   });
 
   async function upload(err: object) {

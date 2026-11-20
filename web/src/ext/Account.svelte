@@ -2,8 +2,7 @@
   import { ApiError, put } from "../lib/api";
   import { loginRedirect } from "../lib/expired";
   import type { PasswordChange } from "../lib/types";
-  import Crumbs from "../components/Crumbs.svelte";
-  import SignedIn from "../decks/SignedIn.svelte";
+  import AccountPage from "../components/AccountPage.svelte";
   import { genericMessage } from "./errors";
 
   let current = $state("");
@@ -40,29 +39,22 @@
   }
 </script>
 
-<svelte:head><title>Account · Orquelo</title></svelte:head>
-
-<SignedIn>
+<AccountPage>
   {#snippet children(me)}
-    <main class="page account">
-      <Crumbs trail={[{ label: "~ / decks", href: "/decks" }, { label: "account" }]} />
-      <h1>Account</h1>
-      <p class="muted data">{me.user.email ?? me.user.name}</p>
-      <form class="stack" onsubmit={change}>
-        <h2>Change password</h2>
-        <input class="sr-only" type="text" value={me.user.email ?? me.user.name} readonly autocomplete="username" aria-hidden="true" tabindex="-1" />
-        <label class="f">Current password<input type="password" bind:value={current} required autocomplete="current-password" /></label>
-        <label class="f">New password<input type="password" bind:value={next} required minlength="10" maxlength="1024" autocomplete="new-password" /></label>
-        <label class="f">Repeat new password<input type="password" bind:value={repeat} required minlength="10" maxlength="1024" autocomplete="new-password" /></label>
-        <div><button class="btn primary" disabled={busy}>Change password</button></div>
-        {#if error}<p class="err" role="alert">{error}</p>{/if}
-        {#if done}<p role="status">Password changed. Your other browsers were signed out.</p>{/if}
-      </form>
-    </main>
+    <form class="stack" onsubmit={change}>
+      <h2>Change password</h2>
+      <input class="sr-only" type="text" value={me.user.email ?? me.user.name} readonly autocomplete="username" aria-hidden="true" tabindex="-1" />
+      <label class="f">Current password<input type="password" bind:value={current} required autocomplete="current-password" /></label>
+      <label class="f">New password<input type="password" bind:value={next} required minlength="10" maxlength="1024" autocomplete="new-password" /></label>
+      <label class="f">Repeat new password<input type="password" bind:value={repeat} required minlength="10" maxlength="1024" autocomplete="new-password" /></label>
+      <div><button class="btn primary" disabled={busy}>Change password</button></div>
+      {#if error}<p class="err" role="alert">{error}</p>{/if}
+      {#if done}<p role="status">Password changed. Your other browsers were signed out.</p>{/if}
+    </form>
   {/snippet}
-</SignedIn>
+</AccountPage>
 
 <style>
-  .account { max-width: 26rem; }
+  form { max-width: 26rem; }
   .sr-only { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; }
 </style>

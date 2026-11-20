@@ -5,6 +5,7 @@
   import { useStream } from "./lib/session.svelte";
   import type { AudienceSnapshot, VoteResponse } from "./lib/types";
   import Tabs from "./components/Tabs.svelte";
+  import CookieSettings from "./audience/CookieSettings.svelte";
   import QA from "./audience/QA.svelte";
   import OptionCard from "./components/OptionCard.svelte";
 
@@ -135,12 +136,14 @@
     {#if hasQA && s.snap.qa}
       <div class="activity" role="tabpanel" id="panel-qa" aria-labelledby="tab-qa" hidden={activity !== "qa"}><QA {pid} {code} qa={s.snap.qa} /></div>
     {/if}
+    <footer><CookieSettings prompt /></footer>
   {/if}
 </main>
 
 <style>
   main { max-width: 40rem; margin: 0 auto; padding: 0 16px; min-height: 100dvh; display: flex; flex-direction: column; }
   header { display: flex; justify-content: space-between; gap: 8px; padding: 12px 0; margin-bottom: 8px; border-bottom: 1px solid var(--line); font-size: 0.85rem; font-stretch: 75%; color: var(--dim); }
+  footer { border-top: 1px solid var(--line); padding-bottom: env(safe-area-inset-bottom); }
   .activity { flex: 1; display: flex; flex-direction: column; padding-top: 12px; }
   .activity[hidden] { display: none; }
   .exclusive-hint { font-size: 0.85rem; }

@@ -25,10 +25,21 @@ Validation limits: title 1–200 chars; question 1–500; options 2–30, each l
 ### Cookies
 | Name | Value | Attributes |
 |---|---|---|
-| `orquelo_pid` | participant UUID v4 | `Path=/; Max-Age=31536000; HttpOnly; SameSite=Lax; Secure` (Secure only when `PUBLIC_BASE_URL` is https) |
-| `orquelo_user` | id-cookie signed `<user id>.<session epoch>` (decimal) | `Path=/; Max-Age=43200; HttpOnly; SameSite=Lax; Secure` (12 h) |
+| `orquelo_participant` | session code and participant UUID v4 | `Path=/api/s/:pid/:code`, browser-session lifetime |
+| `orquelo_remember_participant` | signed participant UUID v4 on opt-in, or the same `off` preference for every visitor who declines | `Path=/api/s`, up to one year |
+| `orquelo_user` | id-cookie signed `<user id>.<session epoch>` (decimal) | `Path=/`, up to 12 hours |
 
-`orquelo_pid` is set by the public `/api/s/...` endpoints and `GET /api/screen/:pid/:screen_code/slides.pdf` when it is absent.
+These cookies use HttpOnly and SameSite=Lax, with Secure when `PUBLIC_BASE_URL` is HTTPS.
+Audience streams and successful submissions set the session cookie when needed. Session
+metadata and projector routes do not set a participant cookie. The legacy `orquelo_pid`
+cookie is ignored and expired on audience participation or a preference update.
+
+`GET /api/s/cookies` returns `{remember: true | false | null}`. A null value means no
+saved choice. `POST /api/s/cookies` takes `{remember: boolean}`, requires a matching
+Origin and returns the saved choice. A change applies when assigning an identity in
+future sessions. It does not replace an existing session identity or rewrite stored
+votes or questions. Declining or leaving the choice unset assigns a fresh identifier
+for each session.
 
 ### Shared shapes
 ```

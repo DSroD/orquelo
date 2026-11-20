@@ -6,6 +6,6 @@ const ext: Extension = {
     { match: (s) => (s.length === 1 && s[0] === "account" ? {} : null), load: () => import("./Account.svelte") },
   ],
   Login: () => import("./Login.svelte"),
-  passwordAccount: true,
+  navigation: [{ label: "Account", href: "/account", when: "signed-in" }],
 };
 export default ext;

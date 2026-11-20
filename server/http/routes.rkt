@@ -123,6 +123,9 @@
      [("api" "me") #:method "get" (named "/api/me" me)]
      [("auth" "logout") #:method "post" (named "/auth/logout" logout)]
      ;; public
+     [("api" "s" "cookies") #:method "get" (public "/api/s/cookies" get-participant-choice)]
+     [("api" "s" "cookies") #:method "post"
+      (named "/api/s/cookies" (λ (req) (check-origin! cfg req) (set-participant-choice d req)))]
      [("api" "s" (integer-arg) (string-arg)) #:method "get" (public "/api/s/:pid/:code" session-info)]
      [("api" "s" (integer-arg) (string-arg) "stream") #:method "get" (public "/api/s/:pid/:code/stream" stream-public)]
      [("api" "s" (integer-arg) (string-arg) "vote") #:method "post" (public "/api/s/:pid/:code/vote" cast-vote*)]

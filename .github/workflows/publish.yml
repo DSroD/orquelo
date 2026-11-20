@@ -63,6 +63,19 @@ jobs:
         run: |
           docker load < image.tar.gz
           scripts/e2e-image orquelo:local
+      - name: Name the tested Docker archive
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
+          ARCH: ${{ matrix.arch }}
+        run: cp -L image.tar.gz "orquelo-$VERSION-linux-$ARCH.tar.gz"
+      - name: Retain the Docker archive
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: docker-${{ matrix.arch }}
+          path: orquelo-${{ needs.check.outputs.version }}-linux-${{ matrix.arch }}.tar.gz
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
       - name: Push ${{ matrix.arch }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -76,7 +76,13 @@ chk "audience code is not a screen code" '[ "$(code $B/api/screen/$PID/$SA)" = 4
 chk "screen info via screen code" '[ "$(curl -s $B/api/screen/$PID/$XA | jq -r .session.code)" = "$SA" ]'
 
 curl -sN "$B/api/screen/$PID/$XA/stream" > screenA.sse &
-curl -s -c s1.jar -o /dev/null "$B/api/s/$PID/$SA"
+# curl writes the cookie jar when it exits. Bootstrap from the audience stream.
+curl -sN --max-time 2 -c s1.jar -o /dev/null "$B/api/s/$PID/$SA/stream?role=audience"
+if awk -v path="/api/s/$PID/$SA" '$3 == path && $6 == "orquelo_participant" {found = 1} END {exit !found}' s1.jar; then
+  ok "audience cookie is scoped to the session"
+else
+  ko "audience cookie is scoped to the session"
+fi
 curl -sN -b s1.jar "$B/api/s/$PID/$SA/stream?role=audience" > audA.sse &
 curl -sN "$B/api/s/$PID/$SB/stream?role=audience" > audB.sse &
 curl -sN -b a.jar "$B/api/sessions/$SA/stream" > modA.sse &

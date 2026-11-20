@@ -2,16 +2,16 @@
 ;; Server-Sent Events response driven by a hub subscription.
 (require racket/contract/base racket/match json web-server/http "../live/hub.rkt" "../live/mailbox.rkt" "json.rkt")
 (provide (contract-out
-          [sse-response (->* ((-> (or/c sub? #f)) (-> sub? any/c))
+          [sse-response (->* ((-> (or/c sub? 'full #f)) (-> sub? any/c))
                              (#:heartbeat real? #:headers (listof header?) #:on-delivery (-> real? any)) response?)]
-          [stream-events! (->* (output-port? (-> (or/c sub? #f)) (-> sub? any/c) real?) (#:on-delivery (-> real? any)) void?)]))
+          [stream-events! (->* (output-port? (-> (or/c sub? 'full #f)) (-> sub? any/c) real?) (#:on-delivery (-> real? any)) void?)]))
 
 ;; The stream carries "snapshot" events (Snapshot structs encoded by snapshot->jsexpr) and a final "ended".
 
 (define sse-headers
   (list (make-header #"Cache-Control" #"no-cache") (make-header #"X-Accel-Buffering" #"no")))
 
-;; [-> (or Sub #f)] [Sub -> Any] [#:on-delivery [Real -> Any]] -> Response
+;; [-> (or Sub 'full #f)] [Sub -> Any] [#:on-delivery [Real -> Any]] -> Response
 ;; subscribes when the response is written and always unsubscribes when the stream ends;
 ;; on-delivery gets the seconds each message waited between the hub queueing it and being written
 (define (sse-response subscribe! unsubscribe! #:heartbeat [hb 15] #:headers [extra '()] #:on-delivery [on-delivery void])
@@ -44,12 +44,13 @@
        (delivered! on-delivery at)
        #t])))
 
-;; OutputPort [-> (or Sub #f)] [Sub -> Any] Real [#:on-delivery [Real -> Any]] -> Void
+;; OutputPort [-> (or Sub 'full #f)] [Sub -> Any] Real [#:on-delivery [Real -> Any]] -> Void
 ;; writes events until the session ends or the client goes away (a write failure)
 (define (stream-events! out subscribe! unsubscribe! hb #:on-delivery [on-delivery void])
-  (define sb (subscribe!))
-  (when sb
-    (dynamic-wind
+  (match (subscribe!)
+    [#f (void)]
+    ['full (with-handlers ([exn:fail:network? void]) (emit! out "retry: 3000\n\nevent: audience-full\ndata: {}\n\n"))]
+    [sb (dynamic-wind
      void
      (λ ()
        (with-handlers ([exn:fail:network? void] ; write failure = client gone
@@ -59,7 +60,7 @@
            (match (sync/timeout hb (sub-mailbox sb))
              [#f (emit! out ": hb\n\n") (loop)]
              [pending (when (deliver! out pending on-delivery) (loop))]))))
-     (λ () (unsubscribe! sb)))))
+     (λ () (unsubscribe! sb)))]))
 
 (module+ test
   (require "../qa.rkt" rackunit "../domain.rkt" "../live/snapshot.rkt" "../live/mailbox.rkt" (submod "../live/hub.rkt" testing))

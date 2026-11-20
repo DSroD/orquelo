@@ -27,6 +27,16 @@ const checkbox = (name: string | RegExp) => screen.getByRole("checkbox", { name 
 beforeEach(stubEventSource);
 afterEach(() => vi.unstubAllGlobals());
 
+it("shows when the audience is full and joins on the next snapshot", async () => {
+  stubFetch(() => ({}));
+  render(Audience, { pid: 7, code });
+  FakeEventSource.last().emit("audience-full", {});
+  expect(await screen.findByRole("heading", { name: "This session is full" })).toBeTruthy();
+  push(fixture<AudienceSnapshot>("audience-idle"));
+  expect(await screen.findByText("Intro to HtDP · Class A")).toBeTruthy();
+  expect(screen.queryByRole("heading", { name: "This session is full" })).toBeNull();
+});
+
 describe("Audience exclusive answers", () => {
   it("blocks conflicts until the current selection is cleared", async () => {
     await open(multi());

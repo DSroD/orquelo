@@ -20,7 +20,9 @@
           [hub-manager (-> hub? thread?)]
           [hub-apply! (-> hub? string? event? (or/c live? #f))]
           [hub-state (-> hub? string? (or/c live? #f))]
-          [hub-subscribe! (-> hub? string? role/c string? (or/c sub? #f))]
+          [hub-subscribe! (->* (hub? string? role/c string?) (#:audience-limit (or/c natural-number/c #f))
+                               (or/c sub? 'full #f))]
+          [hub-audience-present? (-> hub? string? string? boolean?)]
           [hub-unsubscribe! (-> hub? string? sub? void?)]))
 
 ;; A Hub is a (hub Channel Thread [String -> (or Live #f)] AppMetrics [String Peaks -> Any]): the manager
@@ -295,17 +297,38 @@
   (cond [(live-ended? (slot-st s)) (send-snapshot!) (enqueue! sb 'ended)]
         [else (add-sub! s sb) (sync-connections! h s) (send-snapshot!)])) ; a moderator got it with the push
 
-;; Hub String Role String -> (or Sub #f)
-;; registers a subscriber (which immediately gets its snapshot); #f when the session does not exist.
-;; Only the moderators, who see the connection counts, are pushed to.
-(define (hub-subscribe! h code role participant)
+;; Slot String Natural -> Boolean
+;; whether this participant needs a new seat and none are available
+(define (audience-full? s participant limit)
+  (and (not (live-ended? (slot-st s)))
+       (not (hash-has-key? (slot-voters s) participant))
+       (>= (hash-count (slot-voters s)) limit)))
+
+;; Hub String Role String [#:audience-limit (or Natural #f)] -> (or Sub 'full #f)
+;; registers a subscriber with a snapshot, or returns 'full at capacity or #f for an unknown session.
+(define (hub-subscribe! h code role participant #:audience-limit [limit #f])
   (define owner (current-thread))
   (call h (λ (cache)
             (define s (find-slot h cache code))
-            (and s
-                 (let ([sb (sub role participant (make-mailbox) owner #f)])
-                   (admit! h s sb)
-                   sb)))))
+            (cond
+              [(not s) #f]
+              [else
+               (when (and limit (eq? role 'audience) (audience-full? s participant limit))
+                 (sweep-dead! h s))
+               (cond
+                 [(and limit (eq? role 'audience) (audience-full? s participant limit)) 'full]
+                 [else
+                  (define sb (sub role participant (make-mailbox) owner #f))
+                  (admit! h s sb)
+                  sb])]))))
+
+;; Hub String String -> Boolean
+;; whether the participant has an active audience stream in the session
+(define (hub-audience-present? h code participant)
+  (call h (λ (cache)
+            (define s (hash-ref cache code #f))
+            (and s (for/or ([sb (hash-ref (slot-voters s) participant '())])
+                     (not (thread-dead? (sub-owner sb))))))))
 
 ;; Hub String Sub -> Void
 (define (hub-unsubscribe! h code sb)
@@ -399,6 +422,23 @@
     (define h (make-hub load))
     (kill-thread (hub-manager h))
     (check-exn #rx"manager thread is dead" (λ () (hub-state h "abcde23456"))))
+
+  (test-case "audience capacity counts identities and releases the last connection"
+    (define h (make-hub load))
+    (define code "abcde23456")
+    (define (join participant) (hub-subscribe! h code 'audience participant #:audience-limit 1))
+    (define first (join "p1"))
+    (define second (join "p1"))
+    (check-true (sub? first))
+    (check-true (sub? second))
+    (check-true (sub? (hub-subscribe! h code 'screen "screen" #:audience-limit 1)))
+    (check-eq? (join "p2") 'full)
+    (hub-unsubscribe! h code first)
+    (check-true (hub-audience-present? h code "p1"))
+    (check-eq? (join "p2") 'full)
+    (hub-unsubscribe! h code second)
+    (check-false (hub-audience-present? h code "p1"))
+    (check-true (sub? (join "p2"))))
 
   (test-case "unknown session"
     (define h (make-hub load))

@@ -2,7 +2,7 @@ import { ApiError, get } from "./api";
 import { loginRedirect } from "./expired";
 import { openStream } from "./stream";
 
-export type Phase = "live" | "ended" | "missing" | "forbidden";
+export type Phase = "live" | "ended" | "missing" | "forbidden" | "full";
 
 /** Reactive wrapper over openStream; probes the info endpoint when the stream drops so 404/410 stop the retry loop.
  *  A 401 on the probe redirects to login. */
@@ -14,8 +14,9 @@ export function useStream<S>(streamUrl: () => string, infoUrl: () => string) {
     let close = () => {};
     let dead = false;
     close = openStream<S>(stream, {
-      onSnapshot: (s) => { st.snap = s; },
+      onSnapshot: (s) => { st.snap = s; st.phase = "live"; },
       onEnded: () => { st.phase = "ended"; },
+      onAudienceFull: () => { st.phase = "full"; },
       onStatus: (c) => {
         st.connected = c;
         if (c) return;

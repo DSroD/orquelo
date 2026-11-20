@@ -6,6 +6,7 @@ export function nextDelay(attempt: number): number {
 export interface StreamHandlers<S> {
   onSnapshot: (s: S) => void;
   onEnded: () => void;
+  onAudienceFull?: () => void;
   onStatus?: (connected: boolean) => void;
 }
 
@@ -27,6 +28,7 @@ export function openStream<S>(url: string, h: StreamHandlers<S>): () => void {
       stop();
       h.onEnded();
     });
+    es.addEventListener("audience-full", () => h.onAudienceFull?.());
     es.onerror = () => {
       es?.close();
       h.onStatus?.(false);

@@ -86,6 +86,8 @@
     <section class="center"><h1>This lecture has ended</h1><p class="muted">Thanks for taking part.</p></section>
   {:else if s.phase === "missing"}
     <section class="center"><h1>Link not valid</h1><p class="muted">Ask your presenter for the current link.</p></section>
+  {:else if s.phase === "full"}
+    <section class="center" role="status"><h1>This session is full</h1><p class="muted">Keep this page open to join when a seat becomes available.</p></section>
   {:else if !s.snap}
     <section class="center"><p class="muted">Connecting…</p></section>
   {:else}

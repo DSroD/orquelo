@@ -188,6 +188,7 @@ A new run gets its own option IDs and an ordered snapshot of the definition. Tre
 - Headers: `Content-Type: text/event-stream`, `Cache-Control: no-cache`, `X-Accel-Buffering: no`. The first bytes are `retry: 3000\n\n`.
 - The server sends `event: snapshot\ndata: <json>\n\n` immediately on connect, then whenever that subscriber's projection **changes**. The hub stores the last-sent jsexpr per subscriber and skips equal ones, so other students' votes generate no audience traffic.
 - `event: ended\ndata: {}\n\n` is sent once, after which the server closes the stream. Clients stop reconnecting and show "This lecture has ended".
+- Editions with audience admission can send `event: audience-full\ndata: {}\n\n` in place of the first snapshot and close the stream. Clients retry with backoff.
 - Heartbeat: the comment line `: hb\n\n` every 15 s.
 - Clients reconnect with backoff (1 s, 2 s, 4 s … capped at 15 s, reset on the first `snapshot`). A reconnect re-receives the full snapshot.
 

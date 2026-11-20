@@ -102,6 +102,11 @@
   (define public (route-kit-public kit))
   (define named (route-kit-named kit))
 
+  (define (with-audience-limit handler)
+    (if (audience-plugin? p)
+        (λ (d req pid code) (handler d req pid code #:audience-limit (audience-plugin-limit p)))
+        handler))
+
   (define (me req)
     (define u (require-user! d req))
     (json-response (me->jsexpr u ((deps-limits d) (deps-db d) (user-id u)) (storage-used (deps-db d) (user-id u)))))
@@ -127,9 +132,9 @@
      [("api" "s" "cookies") #:method "post"
       (named "/api/s/cookies" (λ (req) (check-origin! cfg req) (set-participant-choice d req)))]
      [("api" "s" (integer-arg) (string-arg)) #:method "get" (public "/api/s/:pid/:code" session-info)]
-     [("api" "s" (integer-arg) (string-arg) "stream") #:method "get" (public "/api/s/:pid/:code/stream" stream-public)]
-     [("api" "s" (integer-arg) (string-arg) "vote") #:method "post" (public "/api/s/:pid/:code/vote" cast-vote*)]
-     [("api" "s" (integer-arg) (string-arg) "qa") #:method "post" (public "/api/s/:pid/:code/qa" submit-question*)]
+     [("api" "s" (integer-arg) (string-arg) "stream") #:method "get" (public "/api/s/:pid/:code/stream" (with-audience-limit stream-public))]
+     [("api" "s" (integer-arg) (string-arg) "vote") #:method "post" (public "/api/s/:pid/:code/vote" (with-audience-limit cast-vote*))]
+     [("api" "s" (integer-arg) (string-arg) "qa") #:method "post" (public "/api/s/:pid/:code/qa" (with-audience-limit submit-question*))]
      ;; public, behind the presenter-only screen code
      [("api" "screen" (integer-arg) (string-arg)) #:method "get" (public "/api/screen/:pid/:screen_code" screen-info)]
      [("api" "screen" (integer-arg) (string-arg) "stream") #:method "get" (public "/api/screen/:pid/:screen_code/stream" stream-screen)]

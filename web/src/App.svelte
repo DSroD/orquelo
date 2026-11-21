@@ -59,7 +59,8 @@
   {#if route.name === "home"}
     {#if ext.Home}{#await ext.Home() then { default: C }}<C />{:catch}{@render failed()}{/await}{/if}
   {:else if route.name === "ext"}
-    {#await ext.routes[route.i].load() then { default: C }}{#key path}<C {...(route.params as any)} />{/key}{:catch}{@render failed()}{/await}
+    <!-- keyed outside the await, so a new path never re-creates the previous route's component with the next route's params -->
+    {#key path}{#await ext.routes[route.i].load() then { default: C }}<C {...(route.params as any)} />{:catch}{@render failed()}{/await}{/key}
   {:else if route.name === "audience"}
     {#key `${route.pid}/${route.code}`}<Audience pid={route.pid} code={route.code} />{/key}
   {:else if route.name === "screen"}

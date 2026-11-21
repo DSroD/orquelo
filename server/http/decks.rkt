@@ -35,6 +35,7 @@
           [resume-poll user-handler/code/c]
           [reveal-poll user-handler/code/c]
           [hide-poll user-handler/code/c]
+          [rotate-poll* user-handler/code/c]
           [stream-moderator user-handler/code/c]
           [export-csv user-handler/code/c]
           [session-results* user-handler/code/c]
@@ -290,11 +291,12 @@
 
 (define-endpoint (open-poll d req me code)
   #:need [s (session me code #:can moderate #:mutation)]
-  #:json [in (open-input [poll-id (id)])]
+  #:json [in (open-input [poll-id (id)] [only-if-idle (optional-boolean #f)])]
   #:need [pl (poll (open-input-poll-id in))]
   (unless (= (poll-presentation-id pl) (session-presentation-id s)) (not-found! "poll not found"))
   (when (poll-archived-at pl) (api-error! 409 "poll_archived" "poll is archived; unarchive it to open it"))
-  (define run (open-run! (db d) (session-id s) (poll-id pl)))
+  (define run (open-run! (db d) (session-id s) (poll-id pl) #:only-if-idle? (open-input-only-if-idle? in)))
+  (unless run (api-error! 409 "poll_already_open" "Close the current vote before opening another poll."))
   (hide-qa! (db d) (session-id s))
   (when (poll-show-results? pl) (reveal-run! (db d) (poll-run-id run)))
   (apply-event! d code (run-opened run (poll-show-results? pl)))
@@ -303,6 +305,7 @@
 (define-endpoint (close-poll d req me code)
   #:need [s (session me code #:can moderate #:mutation)] [st (live code)]
   (define open (live-open-run st))
+  (when open (check-expected-run! req (poll-run-id open) "The current vote changed. Review it before closing voting."))
   (define closed-at (and open (close-run! (db d) (poll-run-id open))))
   (unless closed-at (api-error! 409 "poll_not_open" "no poll is open"))
   ;; the hub gets the run as the database has it now, with every vote committed so far
@@ -333,16 +336,39 @@
   (define o (live-overlay st))
   (if (poll-overlay? o) o (api-error! 409 "no_poll_overlay" "the poll is not on the screen")))
 
+;; Request Id String -> Void
+;; rejects a command whose optional run_id names a run other than the one it would affect
+(define (check-expected-run! req run-id message)
+  (define raw (request-post-data/raw req))
+  (when (and raw (positive? (bytes-length raw)))
+    (define body (request-json req))
+    (when (and (hash-has-key? body 'run_id) (not (= (body-id body 'run_id) run-id)))
+      (api-error! 409 "poll_run_changed" message))))
+
+;; Deps Request String Live Boolean -> Response
+;; changes visibility on the requested overlay, if it is still on screen
+(define (set-poll-visibility! d req code st revealed?)
+  (define id (poll-overlay-run-id (need-poll-overlay! st)))
+  (check-expected-run! req id "The poll on screen changed. Review it before changing result visibility.")
+  (when revealed? (reveal-run! (db d) id))
+  (apply-event! d code (run-visibility-set id revealed?))
+  (no-content))
+
 (define-endpoint (reveal-poll d req me code)
   #:need [s (session me code #:can moderate #:mutation)] [st (live code)]
-  (reveal-run! (db d) (poll-overlay-run-id (need-poll-overlay! st)))
-  (apply-event! d code (run-revealed))
-  (no-content))
+  (set-poll-visibility! d req code st #t))
 
 (define-endpoint (hide-poll d req me code)
   #:need [s (session me code #:can moderate #:mutation)] [st (live code)]
-  (need-poll-overlay! st)
-  (apply-event! d code (run-hidden))
+  (set-poll-visibility! d req code st #f))
+
+(define-endpoint (rotate-poll* d req me code)
+  #:need [s (session me code #:can moderate #:mutation)] [st (live code)]
+  #:json [in (rotation-input [run-id (id)] [revealed (boolean)] [action (one-of "pause" "resume" "next")])]
+  (match-define (poll-overlay id revealed?) (need-poll-overlay! st))
+  (unless (and (= id (rotation-input-run-id in)) (eq? revealed? (rotation-input-revealed? in)))
+    (api-error! 409 "poll_run_changed" "The poll on screen changed. Review it before moving to another page."))
+  (apply-event! d code (poll-rotation-command id revealed? (string->symbol (rotation-input-action in))))
   (no-content))
 
 ;; Deps Live (or QrOverlay Id #f) -> (or Overlay #f)
@@ -411,7 +437,7 @@
 (define (qa-result! value)
   (case value
     [(not-found) (not-found! "question not found")]
-    [(ended) (api-error! 410 "session_ended" "this lecture has ended")]
+    [(ended) (api-error! 410 "session_ended" "this session has ended")]
     [(disabled) (api-error! 409 "qa_disabled" "Q&A is not enabled for this session")]
     [(closed) (api-error! 409 "qa_not_open" "Q&A submissions are closed")]
     [(not-pending) (api-error! 409 "question_not_pending" "restore this question before showing it")]

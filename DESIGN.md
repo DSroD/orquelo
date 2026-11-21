@@ -270,22 +270,23 @@ State and kind as condensed bracketed text: `[live]`, `[ended]`, `[open]`, `[sin
 Section headings render as `── Name ─────────`: a 2ch rule, the dim sage label at 0.85rem / 500, then a rule filling the row. On the results report the run question takes the heading in ink at 600.
 
 ### Kbd Chips
-Shortcut hints sit inside the button they trigger: 0.8em, condensed, 1px currentColor border, 2px radius, 80% opacity. They take the button's color, so on the primary they are dark on amber. Hidden on coarse pointers. Every shortcut button also carries `aria-keyshortcuts`.
+Shortcut hints sit inside the button they trigger: 0.8em, condensed, 1px currentColor border, 2px radius, 80% opacity (100% in a selected segment). They take the button's color, so on the primary they are dark on amber. Hidden on coarse pointers. Every shortcut button also carries `aria-keyshortcuts`.
 
 ### Keyboard Shortcuts (live cockpit)
 - `←` / `PgUp`: previous slide. `→` / `PgDn`: next slide.
-- `o`: open the next poll on this slide. `c`: close voting. `r`: reveal or hide results.
-- `q`: toggle the QR code. `s`: slide only. `p`: show the poll.
+- `o` opens the next poll on this slide after the current vote is closed. `c` closes voting. `r` reveals or hides results when the current vote is on screen.
+- `q` toggles the QR code. `s` shows only the slide. `p` brings the current poll back to the screen.
+- The **Letter shortcuts** checkbox in **Session** remembers the preference in this browser. The slide keys still work with letter shortcuts off.
 - Ignored with modifiers or while typing in a field; letter keys ignore auto-repeat. Each key is gated by the same `can` state as its button.
 
 ### Session Menu
 A `details.menu` whose summary is a small quiet button (`Session`, with a drawn chevron). The pop panel lists full-width buttons: Open screen, Copy audience link, Copy screen link, Results, Export CSV, then End session in red. It closes on an outside click or Escape.
 
 ### Thumb Dock (live cockpit, below 900px)
-Sticky above the status line: Prev, the next step, Next, in a 1fr / 2fr / 1fr grid of 52px buttons. The middle button is the amber fill and names the step (Open poll, Reveal results, Close voting); with no step it is disabled and says why ("No poll on this slide", "Session ended"). While the dock shows, the in-page Prev/Next row is hidden and in-page primaries turn into amber outlines, so the dock holds the only fill.
+Above the status line: Prev, the next step, Next, in a 1fr / 2fr / 1fr grid of 52px buttons. The dock shows the question above the amber action, which names the next step. When a previous run is on screen, its reveal control is separate. The cockpit body scrolls above the dock so controls stay visible when they receive keyboard focus. The in-page Prev/Next row is hidden and in-page primaries turn into amber outlines on phones.
 
 ### Status Line
-A tmux-style line pinned to the bottom of the cockpit: panel background, 1px top rule, condensed 0.85rem, segments separated by 1px rules. Segments: state (bold, with a round green live dot or a square red ended dot), session label (grows, then ellipsis), `slide n/N`, audience and screen connections, `voted/audience`, `next [key] step`, and an amber "reconnecting…" when the stream drops. It never wraps. It drops `next` below 760px and on touch, and switches to short labels below 600px.
+A tmux-style line pinned to the bottom of the cockpit: panel background, 1px top rule, condensed 0.85rem, segments separated by 1px rules. It shows session state, name, slide position, audience and screen connections, the count of votes recorded, the next action, and reconnect status. It drops the next action below 760px and on touch, and uses short labels below 600px.
 
 ### Inputs / Fields
 - **Style:** panel background, 1px rule-line border, 2px radius, padding 8px 10px, min-height 40px. Labels sit above in dim sage at 0.85rem.
@@ -299,8 +300,11 @@ A bordered radio group (max 17rem, scrolls) choosing which run the projector sho
 ### Bar List
 Results as rows: label left, `count · pct%` right (condensed), then a 6px rule-line track with a cyan fill that scales in over 0.25s with cubic-bezier(0.16, 1, 0.3, 1). Shared by the cockpit and the results report.
 
+### Projector poll pages
+The projector uses its existing dark stage and blue bars. It measures full-width answer rows and rotates through pages when they do not fit together. Revealed pages start with up to three leading answers, then continue in vote-count order with alphabetical tie ordering. Unrevealed and zero-vote polls use authored order. Long results hold one set of counts for each rotation. Closing resets to the first page with the final tally and keeps the pause setting. When a projector reports multiple pages, the cockpit shows the position, Pause, Resume and Next page in **On screen** on desktop and above the dock on phones. **On screen** offers setup links before a projector connects.
+
 ### Option Card (audience)
-The one place the system uses a full-width box: a panel button 56px tall, 2px radius, a 22px drawn mark (circle for single, square for multi), and a label that wraps anywhere. Hover: amber border. Selected: amber border, inset 1px amber ring, selection tint, amber dot or check. Arrow keys move focus in single choice. Multi-choice submits through a sticky 52px full-width primary.
+The one place the system uses a full-width box: a panel button 56px tall, 2px radius, a 22px drawn mark (circle for single, square for multi), and a label that wraps anywhere. Hover: amber border. Selected: amber border, inset 1px amber ring, selection tint, amber dot or check. Single choice uses one Tab stop. Arrow keys browse, and Enter, Space or a tap casts the vote. Multi-choice submits through a sticky 52px full-width primary. A failed submission keeps the selection and offers a retry beside the error.
 
 ## Do's and Don'ts
 

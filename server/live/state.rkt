@@ -29,8 +29,8 @@
           [struct run-closed ([run poll-run?])]
           [struct run-resumed ([run poll-run?] [revealed? boolean?])]
           [struct run-synced ([runs (listof poll-run?)] [revealed? boolean?])]
-          [struct run-revealed ()]
-          [struct run-hidden ()]
+          [struct run-visibility-set ([run-id id/c] [revealed? boolean?])]
+          [struct poll-rotation-command ([run-id id/c] [revealed? boolean?] [action (or/c 'pause 'resume 'next)])]
           [struct overlay-set ([overlay (or/c overlay/c #f)])]
           [struct vote-cast ([run-id id/c] [participant string?] [option-ids (listof id/c)])]
           [struct lecture-ended ([at time/c])]
@@ -58,7 +58,8 @@
 
 ;; An Event is one of:
 ;;   (slide-set Id) (run-opened PollRun Boolean) (run-closed PollRun) (run-resumed PollRun Boolean) (run-synced [Listof PollRun] Boolean)
-;;   (run-revealed) (run-hidden) (overlay-set (or Overlay #f))
+;;   (run-visibility-set Id Boolean) (overlay-set (or Overlay #f))
+;;   (poll-rotation-command Id Boolean RotationAction)
 ;;   (vote-cast Id String [Listof Id]) (lecture-ended Time) (connections-changed Natural Natural)
 ;; A QaSynced is a (qa-synced QaState): authoritative persisted Q&A state.
 (struct qa-synced (qa) #:transparent)
@@ -70,8 +71,11 @@
 (struct run-closed (run) #:transparent)
 (struct run-resumed (run revealed?) #:transparent)
 (struct run-synced (runs revealed?) #:transparent)
-(struct run-revealed () #:transparent)
-(struct run-hidden () #:transparent)
+;; A RunVisibilitySet is a (run-visibility-set Id Boolean): the visibility of the displayed run.
+(struct run-visibility-set (run-id revealed?) #:transparent)
+;; A PollRotationCommand is a (poll-rotation-command Id Boolean (or 'pause 'resume 'next)).
+;; Its run and visibility identify the poll projection the presenter is controlling.
+(struct poll-rotation-command (run-id revealed? action) #:transparent)
 (struct overlay-set (overlay) #:transparent)
 (struct vote-cast (run-id participant option-ids) #:transparent)
 (struct lecture-ended (at) #:transparent)
@@ -80,7 +84,7 @@
 ;; Any -> Boolean
 ;; is x an Event?
 (define (event? x)
-  (or (qa-synced? x) (run-updated? x) (slide-set? x) (run-opened? x) (run-closed? x) (run-resumed? x) (run-synced? x) (run-revealed? x) (run-hidden? x) (overlay-set? x)
+  (or (qa-synced? x) (run-updated? x) (slide-set? x) (run-opened? x) (run-closed? x) (run-resumed? x) (run-synced? x) (run-visibility-set? x) (poll-rotation-command? x) (overlay-set? x)
       (vote-cast? x) (lecture-ended? x) (connections-changed? x)))
 
 ;; Events come from concurrent requests, so they can reach the state out of order:
@@ -100,7 +104,8 @@
 ;; whether the newest one's results were shown
 (define (initial-state s pres runs revealed? audience-url screen-url [qa (qa-state #f #f #f #f '() #f)])
   (live (session-code s) (session-screen-code s) (session-label s) (session-started-at s) (session-ended-at s)
-        pres (stage (session-current-slide s) (if (qa-state-on-screen? qa) (qa-overlay (qa-state-selected-id qa)) (reloaded-overlay runs revealed?))) runs (connections 0 0) audience-url screen-url
+        pres (stage (session-current-slide s) (if (qa-state-on-screen? qa) (qa-overlay (qa-state-selected-id qa)) (reloaded-overlay runs revealed?)) #f)
+        runs (connections 0 0) audience-url screen-url
         (peaks 0 (and (pair? runs) (run-open? (car runs)) (poll-run-id (car runs))) 0) qa))
 
 ;; ------------------------------------------------------------------ accessors
@@ -115,7 +120,10 @@
 (define (live-overlay st) (stage-overlay (live-stage st)))
 
 ;; Live (or Overlay #f) -> Live
-(define (with-overlay st overlay) (struct-copy live st [stage (stage (live-slide st) overlay)]))
+(define (with-overlay st overlay)
+  (if (equal? overlay (live-overlay st))
+      st
+      (struct-copy live st [stage (stage (live-slide st) overlay #f)])))
 
 ;; Live -> (or PollRun #f)
 ;; the run opened last, open or closed
@@ -215,11 +223,25 @@
                   [runs runs])]
     [_ st]))
 
-;; Live Boolean -> Live
-;; shows or hides the results inside the poll overlay; without one nothing changes
-(define (set-revealed st on?)
+;; Live Id Boolean -> Live
+;; shows or hides counts while the requested run is still on screen
+(define (set-revealed st run-id on?)
   (match (live-overlay st)
-    [(poll-overlay id _) (with-overlay st (poll-overlay id on?))]
+    [(poll-overlay (== run-id) _) (with-overlay st (poll-overlay run-id on?))]
+    [_ st]))
+
+;; Live Id Boolean RotationAction -> Live
+;; applies a projector page command only to the poll display it targeted
+(define (rotate-poll st run-id revealed? action)
+  (match (live-stage st)
+    [(stage slide (and overlay (poll-overlay (== run-id) (== revealed?))) rotation)
+     (match-define (poll-rotation paused? advance) (or rotation (poll-rotation #f 0)))
+     (define next
+       (match action
+         ['pause (poll-rotation #t advance)]
+         ['resume (poll-rotation #f advance)]
+         ['next (poll-rotation paused? (add1 advance))]))
+     (struct-copy live st [stage (stage slide overlay next)])]
     [_ st]))
 
 ;; Live (or Overlay #f) -> Live
@@ -274,15 +296,15 @@
   (match ev
     [(connections-changed a s) (struct-copy live st [conns (connections a s)])]
     [_ #:when (live-ended? st) st]
-    [(slide-set n) (struct-copy live st [stage (stage n (live-overlay st))])]
+    [(slide-set n) (struct-copy live st [stage (struct-copy stage (live-stage st) [slide n])])]
     [(qa-synced qa) (adopt-qa st qa)]
     [(run-updated run) (replace-run st run)]
     [(run-opened run revealed?) (open-run st run revealed?)]
     [(run-closed run) (close-run-with st run #f)]
     [(run-resumed run revealed?) (resume-run st run revealed?)]
     [(run-synced runs revealed?) (adopt-runs st runs revealed?)]
-    [(run-revealed) (set-revealed st #t)]
-    [(run-hidden) (set-revealed st #f)]
+    [(run-visibility-set id revealed?) (set-revealed st id revealed?)]
+    [(poll-rotation-command id revealed? action) (rotate-poll st id revealed? action)]
     [(overlay-set overlay) (show-overlay st overlay)]
     [(vote-cast run-id participant ids) (cast st run-id participant ids)]
     [(lecture-ended at) (struct-copy live (close-run st at) [ended-at at] [qa (struct-copy qa-state (live-qa st) [open? #f])])]))
@@ -294,7 +316,7 @@
     (cond [(qa-state-on-screen? qa) (qa-overlay (qa-state-selected-id qa))]
           [(qa-overlay? (live-overlay st)) #f]
           [else (live-overlay st)]))
-  (struct-copy live st [qa qa] [stage (stage (live-slide st) overlay)]))
+  (struct-copy live (with-overlay st overlay) [qa qa]))
 
 ;; ------------------------------------------------------------------ projections
 ;; PollRun -> [Listof Tally]
@@ -378,14 +400,14 @@
 ;; Live -> ScreenSnapshot
 (define (screen-view st)
   (screen-snapshot (session-part st) (deck-of st) (live-audience-url st)
-                   (screen-stage (live-slide st) (screen-overlay-of st))))
+                   (screen-stage (live-slide st) (screen-overlay-of st) (stage-rotation (live-stage st)))))
 
 ;; Live -> ModeratorSnapshot
 (define (moderator-view st)
   (define run (live-open-run st))
   (moderator-snapshot (moderator-session (live-code st) (live-screen-code st) (live-label st) (live-started-at st) (live-ended-at st))
                   (deck-of st) (live-audience-url st) (live-screen-url st) (live-conns st)
-                  (live-stage st) (and run (moderator-open-run-of run)) (map run-summary-of (live-runs st)) (live-qa st)))
+                  (live-stage st) (and run (moderator-open-run-of run)) (map run-summary-of (live-runs st)) (live-qa st) '()))
 
 ;; Live -> EditorSnapshot
 ;; only the current poll context, without projector credentials or moderation data.
@@ -438,7 +460,7 @@
 (define (event-affects ev)
   (match ev
     [(? connections-changed?) '(moderator)]
-    [(or (? slide-set?) (? run-revealed?) (? run-hidden?) (? overlay-set?)) '(screen moderator)]
+    [(or (? slide-set?) (? run-visibility-set?) (? poll-rotation-command?) (? overlay-set?)) '(screen moderator)]
     [(or (? qa-synced?) (? run-updated?) (? vote-cast?) (? run-opened?) (? run-closed?) (? run-resumed?) (? run-synced?) (? lecture-ended?)) all-roles]))
 
 (module+ test
@@ -480,7 +502,7 @@
   (define (counts-of o) (map (λ (x) (hash-ref x 'count)) (hash-ref o 'options)))
 
   (test-case "fixtures: exact projection of the contract examples"
-    (define s (step fixture-state (run-revealed)))
+    (define s (step fixture-state (run-visibility-set 12 #t)))
     (check-equal? (js s 'audience "p0") (fixture "audience.json"))
     (check-equal? (js s 'audience "nobody") (fixture "audience-no-vote.json"))
     (check-equal? (js idle 'audience "p0") (fixture "audience-idle.json"))
@@ -507,7 +529,7 @@
     (check-equal? (live-overlay s) (qr-overlay))
     (check-equal? (stage-js s 'moderator) (hasheq 'slide 9 'overlay (hasheq 'type "qr")))
     (check-equal? (stage-js s 'screen) (hasheq 'slide 9 'overlay (hasheq 'type "qr")))
-    (check-equal? (live-stage (step s (overlay-set #f))) (stage 9 #f)))
+    (check-equal? (live-stage (step s (overlay-set #f))) (stage 9 #f #f)))
 
   (test-case "overlay-set: replaces, clears, and the poll overlay needs a run of this session"
     (check-false (live-overlay (step idle (overlay-set (poll-overlay 12 #f)))))
@@ -522,7 +544,7 @@
     (check-equal? (live-runs qr) (live-runs s)))
 
   (test-case "open: the run is the open one, the previous closes, the poll overlay goes up as told"
-    (define s (step (step (st-with-run (run-revealed)) (overlay-set (qr-overlay))) (run-opened (run #:id 13) #f)))
+    (define s (step (step (st-with-run (run-visibility-set 12 #t)) (overlay-set (qr-overlay))) (run-opened (run #:id 13) #f)))
     (check-equal? (latest-run-id s) 13)
     (check-equal? (poll-run-id (live-open-run s)) 13)
     (check-equal? (map poll-run-id (live-runs s)) '(13 12))
@@ -531,11 +553,11 @@
     (check-equal? (live-overlay (step s (run-opened (run #:id 14) #t))) (poll-overlay 14 #t)))
 
   (test-case "open of an already known run is a no-op"
-    (define s (cast-vote (st-with-run (run-revealed)) "p1" '(101)))
+    (define s (cast-vote (st-with-run (run-visibility-set 12 #t)) "p1" '(101)))
     (check-equal? (step s (run-opened (run) #f)) s))
 
   (test-case "close: no run is open, the stage is unchanged, the run stays in the history"
-    (define s (step (st-with-run (run-revealed)) (run-closed (run #:closed "2026-11-15T10:30:00.000Z"))))
+    (define s (step (st-with-run (run-visibility-set 12 #t)) (run-closed (run #:closed "2026-11-15T10:30:00.000Z"))))
     (check-false (live-run-open? s))
     (check-equal? (live-overlay s) (poll-overlay 12 #t))
     (check-equal? (hash-ref (js s 'moderator "x") 'open_run) 'null)
@@ -564,7 +586,7 @@
     (check-equal? (map poll-run-id (live-runs (step voted-closed (run-resumed (run #:id 14) #f)))) '(14 12)))
 
   (test-case "audience sees the open run only: nothing once it is closed, whatever the stage shows"
-    (define s (cast-vote (st-with-run (run-revealed)) "p1" '(101)))
+    (define s (cast-vote (st-with-run (run-visibility-set 12 #t)) "p1" '(101)))
     (check-equal? (hash-ref (hash-ref (js s 'audience "p1") 'poll) 'run_id) 12)
     (define closed (step s (run-closed (run #:votes (list (vote "p1" '(101))) #:closed "t"))))
     (check-equal? (hash-ref (js closed 'audience "p1") 'poll) 'null)
@@ -588,7 +610,7 @@
     (define past (step s1 (run-closed (run #:votes (list (vote "p1" '(101))) #:closed "t"))))
     (define s (cast-vote (open-another past 13) "p2" '(102) 13))
     ;; the stage shows run 13; bring back run 12 and reveal it
-    (define shown (step (step s (overlay-set (poll-overlay 12 #f))) (run-revealed)))
+    (define shown (step (step s (overlay-set (poll-overlay 12 #f))) (run-visibility-set 12 #t)))
     (check-equal? (live-overlay shown) (poll-overlay 12 #t))
     (define o (screen-overlay-js shown))
     (check-equal? (hash-ref o 'run_id) 12)
@@ -603,7 +625,7 @@
     (check-equal? (counts-of (screen-overlay-js (cast-vote live13 "p4" '(101) 13))) '(1 1 1)))
 
   (test-case "order: a late run-opened for an older run is ignored"
-    (define s (step (st-with-run (run-revealed)) (run-opened (run #:id 13) #f)))
+    (define s (step (st-with-run (run-visibility-set 12 #t)) (run-opened (run #:id 13) #f)))
     (define s2 (step s (run-opened (run) #f)))
     (check-equal? s2 s)
     (check-equal? (latest-run-id s2) 13)
@@ -690,7 +712,7 @@
     (check-equal? (hash-ref (js s 'audience "p3") 'my_vote) 'null))
 
   (test-case "audience never sees counts or totals"
-    (define s (step (cast-vote (st-with-run) "p1" '(101)) (run-revealed)))
+    (define s (step (cast-vote (st-with-run) "p1" '(101)) (run-visibility-set 12 #t)))
     (check-false (regexp-match? #rx"count|total_voters" (jsexpr->string (js s 'audience "p1")))))
 
   (test-case "screen counts are null unless revealed; total_voters is always there; hide re-hides"
@@ -700,38 +722,58 @@
     (check-false (hash-ref hidden 'revealed))
     (check-equal? (hash-ref hidden 'total_voters) 1)
     (check-equal? (counts-of hidden) '(null null null))
-    (define r (step s (run-revealed)))
+    (define r (step s (run-visibility-set 12 #t)))
     (check-true (hash-ref (screen-overlay-js r) 'revealed))
     (check-equal? (counts-of (screen-overlay-js r)) '(1 0 0))
     (check-equal? (hash-ref (stage-js r 'moderator) 'overlay) (hasheq 'type "poll" 'run_id 12 'revealed #t))
-    (check-equal? (screen-overlay-js (step r (run-hidden))) hidden))
+    (check-equal? (screen-overlay-js (step r (run-visibility-set 12 #f))) hidden))
 
   (test-case "reveal and hide act only inside the poll overlay"
-    (check-equal? (step idle (run-revealed)) idle)
-    (check-equal? (step idle (run-hidden)) idle)
+    (check-equal? (step idle (run-visibility-set 12 #t)) idle)
+    (check-equal? (step idle (run-visibility-set 12 #f)) idle)
     (define qr (step (st-with-run) (overlay-set (qr-overlay))))
-    (check-equal? (step qr (run-revealed)) qr)
-    (check-equal? (step qr (run-hidden)) qr)
-    (define r (step (st-with-run (run-revealed)) (overlay-set #f)))
-    (check-equal? (step r (run-revealed)) r)
+    (check-equal? (step qr (run-visibility-set 12 #t)) qr)
+    (check-equal? (step qr (run-visibility-set 12 #f)) qr)
+    (define r (step (st-with-run (run-visibility-set 12 #t)) (overlay-set #f)))
+    (check-equal? (step r (run-visibility-set 12 #t)) r)
     (check-equal? (live-overlay (step r (overlay-set (poll-overlay 12 #t)))) (poll-overlay 12 #t)))
 
+  (test-case "a delayed visibility command cannot affect a different run"
+    (define s (open-another (st-with-run) 13))
+    (check-equal? (step s (run-visibility-set 12 #t)) s)
+    (check-equal? (live-overlay (step s (run-visibility-set 13 #t))) (poll-overlay 13 #t)))
+
+  (test-case "projector page controls follow the displayed run and visibility"
+    (define s (st-with-run))
+    (define paused (step s (poll-rotation-command 12 #f 'pause)))
+    (define advanced (step (step paused (poll-rotation-command 12 #f 'next))
+                           (poll-rotation-command 12 #f 'next)))
+    (for ([role '(screen moderator)])
+      (check-equal? (hash-ref (stage-js advanced role) 'rotation) (fixture "poll-rotation.json"))
+      (check-false (hash-has-key? (stage-js (step advanced (run-visibility-set 12 #t)) role) 'rotation)))
+    (check-equal? (js advanced 'audience "p1") (js s 'audience "p1"))
+    (check-equal? (step advanced (poll-rotation-command 13 #f 'next)) advanced)
+    (check-equal? (step advanced (poll-rotation-command 12 #t 'next)) advanced)
+    (check-equal? (stage-rotation (live-stage (step advanced (slide-set 3)))) (poll-rotation #t 2))
+    (check-equal? (stage-rotation (live-stage (step advanced (poll-rotation-command 12 #f 'resume)))) (poll-rotation #f 2))
+    (check-false (stage-rotation (live-stage (step advanced (overlay-set (qr-overlay)))))))
+
   (test-case "closing the run keeps the overlay; the slide changes underneath"
-    (define s (step (st-with-run (run-revealed)) (run-closed (run #:closed "t"))))
+    (define s (step (st-with-run (run-visibility-set 12 #t)) (run-closed (run #:closed "t"))))
     (check-false (live-run-open? s))
     (check-equal? (live-overlay s) (poll-overlay 12 #t))
     (check-equal? (live-overlay (step s (slide-set 3))) (poll-overlay 12 #t)))
 
   (test-case "reload: stage overlay is the open run's poll, revealed as persisted, else none"
     (define (reloaded runs revealed?) (live-stage (initial-state sess pres runs revealed? aud-url scr-url)))
-    (check-equal? (reloaded '() #f) (stage 5 #f))
-    (check-equal? (reloaded (list (run)) #f) (stage 5 (poll-overlay 12 #f)))
-    (check-equal? (reloaded (list (run)) #t) (stage 5 (poll-overlay 12 #t)))
-    (check-equal? (reloaded (list (run #:id 13 #:closed "t") (run)) #t) (stage 5 #f)))
+    (check-equal? (reloaded '() #f) (stage 5 #f #f))
+    (check-equal? (reloaded (list (run)) #f) (stage 5 (poll-overlay 12 #f) #f))
+    (check-equal? (reloaded (list (run)) #t) (stage 5 (poll-overlay 12 #t) #f))
+    (check-equal? (reloaded (list (run #:id 13 #:closed "t") (run)) #t) (stage 5 #f #f)))
 
   (test-case "the audience projection ignores overlays"
     (define s (cast-vote (st-with-run) "p1" '(101)))
-    (for ([ev (list (overlay-set (qr-overlay)) (overlay-set #f) (run-revealed) (run-hidden) (slide-set 2))])
+    (for ([ev (list (overlay-set (qr-overlay)) (overlay-set #f) (run-visibility-set 12 #t) (run-visibility-set 12 #f) (slide-set 2))])
       (check-equal? (project (step s ev) 'audience "p1") (project s 'audience "p1"))))
 
   (test-case "moderator runs: history newest first"
@@ -789,8 +831,8 @@
     (define r (run))
     (for ([row (list (list (slide-set 2) '(screen moderator))
                      (list (overlay-set #f) '(screen moderator))
-                     (list (run-revealed) '(screen moderator))
-                     (list (run-hidden) '(screen moderator))
+                     (list (run-visibility-set 12 #t) '(screen moderator))
+                     (list (run-visibility-set 12 #f) '(screen moderator))
                      (list (connections-changed 1 1) '(moderator))
                      (list (vote-cast 12 "p" '(101)) all-roles)
                      (list (run-opened r #f) all-roles)

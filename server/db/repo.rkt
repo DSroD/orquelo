@@ -31,7 +31,7 @@
           [list-sessions (-> connection? id/c (listof session?))]
           [set-slide! (-> connection? id/c id/c void?)]
           [end-session! (-> connection? id/c time/c)]
-          [open-run! (-> connection? id/c id/c poll-run?)]
+          [open-run! (->* (connection? id/c id/c) (#:only-if-idle? boolean?) (or/c poll-run? #f))]
           [close-run! (-> connection? id/c (or/c time/c #f))]
           [resume-run! (-> connection? id/c boolean?)]
           [reveal-run! (-> connection? id/c void?)]
@@ -424,8 +424,10 @@
   (match-define (vector id poll-id question kind opened closed allow-additional?) r)
   (poll-run id poll-id question kind opened (nul closed) '() empty-ballots allow-additional?))
 
-(define-query (insert-run! c session-id poll-id) #:value
-  "INSERT INTO poll_runs (session_id, poll_id, opened_at, allow_additional_answers) SELECT $1, id, clock_timestamp(), allow_additional_answers FROM polls WHERE id=$2 RETURNING id")
+(define-query (insert-run! c session-id poll-id) #:maybe-value
+  "INSERT INTO poll_runs (session_id, poll_id, opened_at, allow_additional_answers)
+   SELECT $1, id, clock_timestamp(), allow_additional_answers FROM polls WHERE id=$2
+   ON CONFLICT (session_id) WHERE closed_at IS NULL DO NOTHING RETURNING id")
 
 (define-query (run-row c run-id) #:maybe-row row->run run-select " WHERE r.id=$1")
 
@@ -494,17 +496,19 @@
 (define (session-runs c session-id)
   (for/list ([r (session-run-rows c session-id)]) (complete-run c r)))
 
-;; Connection Id Id -> PollRun
-;; opens a run, closing any open one
-(define (open-run! c session-id poll-id)
-  (get-run c (call-with-transaction c
-              (λ ()
-                (lock-session-for-run c session-id)
-                (lock-poll c poll-id)
-                (close-open-runs! c session-id)
-                (define id (insert-run! c session-id poll-id))
-                (snapshot-options! c id poll-id)
-                id))))
+;; Connection Id Id [#:only-if-idle? Boolean] -> (or PollRun #f)
+;; opens a run, optionally refusing to replace an open vote
+(define (open-run! c session-id poll-id #:only-if-idle? [only-if-idle? #f])
+  (define id
+    (call-with-transaction c
+      (λ ()
+        (lock-session-for-run c session-id)
+        (lock-poll c poll-id)
+        (unless only-if-idle? (close-open-runs! c session-id))
+        (define id (insert-run! c session-id poll-id))
+        (when id (snapshot-options! c id poll-id))
+        id)))
+  (and id (get-run c id)))
 
 ;; ---------------------------------------------------------------- votes
 (struct reject exn:fail (reason))

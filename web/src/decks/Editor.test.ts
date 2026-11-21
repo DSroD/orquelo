@@ -157,6 +157,7 @@ describe("Deck editor: gating by access", () => {
 
   it("edit allows rename and poll changes, nothing owner-only", async () => {
     await open({ edit: true });
+    expect(screen.getByRole("heading", { name: "Intro to HtDP", level: 1 })).toBeTruthy();
     expect(present("Rename")).toBeTruthy();
     expect(present("Archive")).toBeNull();
     expect(present("Delete")).toBeNull();

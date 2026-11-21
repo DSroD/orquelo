@@ -33,7 +33,10 @@ const dock = () => within(screen.getByRole("group", { name: "Lecture controls" }
 const posts = () => net.posts().map(({ method, url, body }) => [method, url, body]);
 const post = (path: string, body: unknown = {}) => ["POST", `${base}/${path}`, body];
 
-beforeEach(stubEventSource);
+beforeEach(() => {
+  localStorage.clear();
+  stubEventSource();
+});
 afterEach(() => vi.unstubAllGlobals());
 
 describe("Live cockpit: reading the snapshot", () => {
@@ -56,7 +59,24 @@ describe("Live cockpit: reading the snapshot", () => {
   it("opens the slide's poll from the dock", async () => {
     await open(snapshot({ ...noVote }));
     await user.click(await dock().findByRole("button", { name: "Open poll" }));
-    expect(posts()).toEqual([post("poll/open", { poll_id: 3 })]);
+    expect(posts()).toEqual([post("poll/open", { poll_id: 3, only_if_idle: true })]);
+  });
+
+  it("requires closing voting before another poll can open", async () => {
+    await open();
+    const start = await screen.findByRole<HTMLButtonElement>("button", { name: "Start new vote" });
+    expect(start.disabled).toBe(true);
+    await user.click(start);
+    await user.keyboard("o");
+    expect(posts()).toEqual([]);
+    await user.click(dock().getByRole("button", { name: "Reveal results" }));
+    push(atSlide(5, { type: "poll", run_id: 12, revealed: true }));
+    await user.click(await dock().findByRole("button", { name: "Close voting" }));
+    expect(posts().at(-1)).toEqual(post("poll/close", { run_id: 12 }));
+    push(snapshot({ open_run: null, runs: [closedRun] }));
+    await vi.waitFor(() => expect(start.disabled).toBe(false));
+    await user.click(start);
+    expect(posts().at(-1)).toEqual(post("poll/open", { poll_id: 3, only_if_idle: true }));
   });
 });
 
@@ -134,16 +154,47 @@ describe("Live cockpit: what is on the screen", () => {
   it("reveals and hides results", async () => {
     await open();
     await user.keyboard("r");
-    expect(posts()).toEqual([post("poll/reveal")]);
+    expect(posts()).toEqual([post("poll/reveal", { run_id: 12 })]);
     push(atSlide(5, { type: "poll", run_id: 12, revealed: true }));
     await user.click(await screen.findByRole("button", { name: /^Hide results/ }));
-    await vi.waitFor(() => expect(posts().at(-1)).toEqual(post("poll/hide")));
+    await vi.waitFor(() => expect(posts().at(-1)).toEqual(post("poll/hide", { run_id: 12 })));
   });
 
   it("closes voting with c", async () => {
     await open();
     await user.keyboard("c");
-    expect(posts()).toEqual([post("poll/close")]);
+    expect(posts()).toEqual([post("poll/close", { run_id: 12 })]);
+  });
+
+  it("offers to show the live poll while a previous run is on screen", async () => {
+    await open(snapshot({
+      runs: [...moderator.runs, { ...closedRun, run_id: 11, question: "Earlier vote" }],
+      stage: { slide: 5, overlay: { type: "poll", run_id: 11, revealed: false } },
+    }));
+    await user.keyboard("r");
+    expect(posts()).toEqual([]);
+    await user.click(screen.getByRole("button", { name: "Reveal previous results" }));
+    expect(posts()).toEqual([post("poll/reveal", { run_id: 11 })]);
+    await user.click(dock().getByRole("button", { name: "Show current poll" }));
+    expect(posts().at(-1)).toEqual(post("overlay", { overlay: { type: "poll", run_id: 12 } }));
+    push(atSlide(5, { type: "poll", run_id: 12, revealed: false }));
+    await user.click(await dock().findByRole("button", { name: "Reveal results" }));
+    expect(posts().at(-1)).toEqual(post("poll/reveal", { run_id: 12 }));
+  });
+
+  it("controls pages for the displayed poll and reflects the shared pause state", async () => {
+    await open(snapshot({ screen_pages: [{ page: 1, total: 1 }] }));
+    const stage = within(screen.getByRole("region", { name: "On screen" }));
+    expect(stage.queryByRole("group", { name: "Projector pages" })).toBeNull();
+    push(snapshot({ screen_pages: [{ page: 1, total: 3 }] }));
+    const pages = within(await stage.findByRole("group", { name: "Projector pages" }));
+    await user.click(pages.getByRole("button", { name: "Pause rotation" }));
+    push(snapshot({ screen_pages: [{ page: 2, total: 3 }], stage: { ...moderator.stage, rotation: { paused: true, advance: 0 } } }));
+    expect(await pages.findByRole("button", { name: "Resume rotation" })).toBeTruthy();
+    expect(pages.getByRole("status").textContent).toBe("View 2 / 3");
+    await user.click(pages.getByRole("button", { name: "Next page" }));
+    await user.click(pages.getByRole("button", { name: "Resume rotation" }));
+    expect(posts()).toEqual(["pause", "next", "resume"].map((action) => post("poll/rotation", { run_id: 12, revealed: false, action })));
   });
 });
 
@@ -161,6 +212,20 @@ describe("Live cockpit: shortcuts and typing", () => {
     await user.keyboard(`{${mod}>}s{ArrowRight}c{/${mod}}`);
     await settle();
     expect(posts()).toEqual([]);
+  });
+
+  it("can turn off letter shortcuts without losing slide keys or buttons", async () => {
+    const view = await open();
+    await user.click(screen.getByText("Session", { selector: "summary" }));
+    await user.click(screen.getByRole("checkbox", { name: "Letter shortcuts" }));
+    await user.keyboard("{Escape}rcq{ArrowRight}");
+    expect(posts()).toEqual([post("slide", { slide: 6 })]);
+    expect(dock().getByRole("button", { name: "Reveal results" }).hasAttribute("aria-keyshortcuts")).toBe(false);
+    await user.click(dock().getByRole("button", { name: "Reveal results" }));
+    expect(posts().at(-1)).toEqual(post("poll/reveal", { run_id: 12 }));
+    view.unmount();
+    await open();
+    expect(dock().getByRole("button", { name: "Reveal results" }).hasAttribute("aria-keyshortcuts")).toBe(false);
   });
 });
 

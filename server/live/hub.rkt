@@ -5,7 +5,7 @@
 ;; Subscribers get messages in a mailbox: a Queued Snapshot (a newer one replaces an unread one), or a
 ;; Queued 'ended once the session is over.
 ;; A subscriber only receives a snapshot when its own projection changed.
-(require racket/contract/base racket/match racket/list
+(require racket/contract/base racket/match racket/list racket/promise
          "../domain.rkt" "../qa.rkt" "../metrics/app.rkt" "state.rkt" "snapshot.rkt" "mailbox.rkt")
 (provide hub?
          (contract-out
@@ -23,6 +23,7 @@
           [hub-subscribe! (->* (hub? string? role/c string?) (#:audience-limit (or/c natural-number/c #f))
                                (or/c sub? 'full #f))]
           [hub-audience-present? (-> hub? string? string? boolean?)]
+          [hub-report-screen-page! (-> hub? string? string? poll-overlay? boolean? screen-page? void?)]
           [hub-unsubscribe! (-> hub? string? sub? void?)]))
 
 ;; A Hub is a (hub Channel Thread [String -> (or Live #f)] AppMetrics [String Peaks -> Any]): the manager
@@ -32,10 +33,10 @@
 ;; A HubStats is a (hub-stats Natural Natural Natural Natural Natural Natural)
 ;; interp. sessions loaded, sessions not ended, sessions with an open run, and the subscribers by role.
 (struct hub-stats (loaded live runs-open audience screen moderator) #:transparent)
-;; A Sub is a (sub Role String Mailbox Thread (or Snapshot #f))
-;; interp. a subscriber, the thread that reads its mailbox and the last snapshot sent to it.
+;; A Sub is a (sub Role String Mailbox Thread (or Snapshot #f) (or ScreenPage #f))
+;; interp. a subscriber, its reader, the last snapshot sent and, for screens, its last measured page.
 ;; A killed owner never unsubscribes, so the hub drops subscribers whose owner is dead.
-(struct sub (role participant mailbox owner [last #:mutable]))
+(struct sub (role participant mailbox owner [last #:mutable] [page #:auto #:mutable]) #:auto-value #f)
 ;; A Slot is a (slot Live (Hasheq Role (Hasheq Sub #t)) (Hash String [Listof Sub]) Peaks)
 ;; interp. a loaded session, its subscribers as a set per role (so counts are O(1)), the audience
 ;; subscribers by participant (a vote reaches only its voter) and the peaks last handed over for
@@ -178,14 +179,34 @@
     (enqueue! sb snap))
   changed?)
 
-;; Hub Slot Event [Listof Role] -> Void
+;; Slot -> [Listof ScreenPage]
+;; the distinct pages being projected, ordered so unchanged views compare equal.
+(define (screen-pages s)
+  (define pages (remove-duplicates (filter-map sub-page (role-subs s 'screen))))
+  (sort (sort pages < #:key screen-page-number) < #:key screen-page-total))
+
+;; Live -> (or #f (List PollOverlay Boolean))
+;; identifies the displayed poll and whether viewers can vote on it.
+(define (poll-view st)
+  (match (live-overlay st)
+    [(and overlay (poll-overlay id _))
+     (define open (live-open-run st))
+     (list overlay (and open (= id (poll-run-id open))))]
+    [_ #f]))
+
+;; Hub Slot (or Event #f) [Listof Role] -> Void
 ;; sends the subscribers of the roles the event affects their snapshot, if it changed.
 ;; Records the snapshots sent and suppressed per role.
 (define (push-roles! h s ev roles)
   (define pr (project-all (slot-st s)))
+  (define moderator
+    (delay (struct-copy moderator-snapshot (project-for pr 'moderator "") [screen-pages (screen-pages s)])))
   (for ([role roles])
     (define subs (targets s role ev))
-    (define sent (for/sum ([sb subs]) (if (send-if-changed! sb (project-for pr role (sub-participant sb))) 1 0)))
+    (define sent
+      (for/sum ([sb subs])
+        (define snap (if (eq? role 'moderator) (force moderator) (project-for pr role (sub-participant sb))))
+        (if (send-if-changed! sb snap) 1 0)))
     (count-messages! (hub-metrics h) role sent (- (length subs) sent))))
 
 ;; Slot -> Void
@@ -210,6 +231,21 @@
   (define ev (connections-changed (role-count s 'audience) (role-count s 'screen)))
   (set-slot-st! s (step (slot-st s) ev))
   (push! h s ev))
+
+;; Hub String String PollOverlay Boolean ScreenPage -> Void
+;; accepts a measurement for the current poll from a connected projector only.
+(define (hub-report-screen-page! h code viewer overlay open? page)
+  (call h (λ (cache)
+            (define s (hash-ref cache code #f))
+            (when (and s (equal? (poll-view (slot-st s)) (list overlay open?)))
+              (define matching
+                (filter (λ (sb) (and (equal? viewer (sub-participant sb))
+                                     (not (thread-dead? (sub-owner sb)))
+                                     (not (equal? page (sub-page sb)))))
+                        (role-subs s 'screen)))
+              (unless (null? matching)
+                (for ([sb matching]) (set-sub-page! sb page))
+                (push-roles! h s #f '(moderator)))))))
 
 ;; Hub Slot -> Void
 ;; drops the subscribers whose thread died (they never unsubscribe), pushing the new counts if any went
@@ -264,12 +300,15 @@
                      (cond [(not s) (list #f '())]
                            [else
                             (define before (if boundary? (take-dirty! code s) '()))
+                            (define previous-view (poll-view (slot-st s)))
                             (define applied (authoritative-event h s code event))
                             (define synced? (and (sync-needed? (slot-st s) applied) (begin (sync! h s code) #t)))
                             ;; an adopted database run can change any role, so push as for a run-synced
                             (set-slot-st! s (step (slot-st s) applied))
                             (when (or (overlay-set? applied) (run-opened? applied) (run-resumed? applied))
                               (sync-qa-overlay! h s code))
+                            (unless (equal? previous-view (poll-view (slot-st s)))
+                              (for ([sb (role-subs s 'screen)]) (set-sub-page! sb #f)))
                             (push! h s (if synced? (run-synced '() #f) applied))
                             (list (slot-st s) (append before (if boundary? (take-dirty! code s) '())))])))))
   (store-peaks! h dirty)
@@ -295,7 +334,7 @@
 (define (admit! h s sb)
   (define (send-snapshot!) (send-if-changed! sb (project (slot-st s) (sub-role sb) (sub-participant sb))))
   (cond [(live-ended? (slot-st s)) (send-snapshot!) (enqueue! sb 'ended)]
-        [else (add-sub! s sb) (sync-connections! h s) (send-snapshot!)])) ; a moderator got it with the push
+        [else (add-sub! s sb) (sync-connections! h s) (unless (eq? (sub-role sb) 'moderator) (send-snapshot!))]))
 
 ;; Slot String Natural -> Boolean
 ;; whether this participant needs a new seat and none are available
@@ -341,7 +380,7 @@
 (module+ testing (provide sub)) ; the constructor, for tests of other modules
 
 (module+ test
-  (require rackunit "../metrics/registry.rkt")
+  (require rackunit racket/runtime-path json "../http/json.rkt" "../metrics/registry.rkt")
   (define (a-session code label) (session 1 7 code "zzzzzzzzzz" label 1 "t" #f))
   (define sess (a-session "abcde23456" "A"))
   (define pres (presentation 7 "T" 5 "t" #f))
@@ -353,6 +392,35 @@
     (and (equal? code "abcde23456") (initial-state sess pres '() #f "http://a" "http://s")))
   (define (drain sb) (map queued-message (or (sync/timeout 0.05 (sub-mailbox sb)) '())))
   (define (snapshots ms) (filter (λ (m) (not (eq? m 'ended))) ms))
+  (define-runtime-path pages-fixture "../../docs/api-fixtures/screen-pages.json")
+
+  (test-case "moderators see measured pages while their projector streams and poll view match"
+    (define h (make-hub load))
+    (define code "abcde23456")
+    (define a (hub-subscribe! h code 'screen "first"))
+    (define b (hub-subscribe! h code 'screen "second"))
+    (define adm (hub-subscribe! h code 'moderator "-"))
+    (define (pages) (hash-ref (snapshot->jsexpr (sub-last adm)) 'screen_pages #f))
+    (define (report viewer page total [open? #t])
+      (hub-report-screen-page! h code viewer (poll-overlay 12 #f) open? (screen-page page total)))
+    (hub-apply! h code (run-opened run #f))
+    (drain a)
+    (report "unknown" 2 2)
+    (report "first" 1 3 #f)
+    (check-false (pages))
+    (report "second" 2 4)
+    (report "first" 1 3)
+    (check-equal? (pages) (call-with-input-file pages-fixture read-json))
+    (check-equal? (drain a) '())
+    (hub-unsubscribe! h code b)
+    (check-equal? (pages) (list (hasheq 'page 1 'total 3)))
+    (hub-apply! h code (run-closed (struct-copy poll-run run [closed-at "t"])))
+    (report "first" 2 3)
+    (check-false (pages))
+    (report "first" 1 3 #f)
+    (check-equal? (pages) (list (hasheq 'page 1 'total 3)))
+    (hub-apply! h code (overlay-set (qr-overlay)))
+    (check-false (pages)))
 
   (test-case "metrics: pushes, messages and calls are recorded; stats count subscribers"
     (define m (make-app-metrics))
@@ -442,7 +510,7 @@
 
   (test-case "unknown session"
     (define h (make-hub load))
-    (check-false (hub-apply! h "zzzzzzzzzz" (run-hidden)))
+    (check-false (hub-apply! h "zzzzzzzzzz" (run-visibility-set 12 #f)))
     (check-false (hub-subscribe! h "zzzzzzzzzz" 'audience "p")))
 
   (test-case "lazy load happens once per code"

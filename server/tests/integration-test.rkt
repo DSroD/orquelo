@@ -1,6 +1,6 @@
 #lang racket/base
 ;; End-to-end: the core edition on a random port (password login) against Postgres (TEST_DATABASE_URL).
-(require rackunit racket/list racket/string racket/file racket/port json net/http-client
+(require rackunit racket/list racket/string racket/file json
          db "support.rkt" "../config.rkt" "../db/accounts.rkt" "../db/conn.rkt" "../domain.rkt" "../main.rkt" "../edition.rkt"
          "../editions/core.rkt" "../live/codes.rkt" (rename-in "http-client.rkt" [upload! upload-as!]))
 
@@ -422,6 +422,17 @@
     (check-equal? (drain next-bscreen) '())
     (check-equal? (hash-ref (resp-json (post-moderator codeB "/poll/open" (hasheq 'poll_id 999999))) 'error) "not_found"))
 
+  (test-case "guarded poll controls preserve the open vote when the client is stale"
+    (define blocked (post-moderator codeA "/poll/open" (hasheq 'poll_id (hash-ref poll 'id) 'only_if_idle #t)))
+    (check-equal? (resp-status blocked) 409)
+    (check-equal? (hash-ref (resp-json blocked) 'error) "poll_already_open")
+    (for ([action '("/poll/close" "/poll/reveal" "/poll/hide")])
+      (define r (post-moderator codeA action (hasheq 'run_id (add1 run-id))))
+      (check-equal? (resp-status r) 409)
+      (check-equal? (hash-ref (resp-json r) 'error) "poll_run_changed"))
+    (check-equal? (drain next-moderator) '())
+    (check-equal? (drain next-screen) '()))
+
   (test-case "vote validation"
     (define (vote code j) (http "POST" (path code "/vote") #:json j #:cookies (list (pid-cookie code p1))))
     (define ids (opt-ids poll))
@@ -719,18 +730,30 @@
     (check-equal? (resp-status (as-user "GET" (adm codeB "/results"))) 200))
 
   (test-case "metrics are scraped from their own port; the main port serves the SPA at /metrics"
-    (define-values (status _h in)
-      (http-sendrecv "127.0.0.1" "/metrics" #:port (add1 (base-port))))
-    (define body (port->string in))
-    (close-input-port in)
-    (check-regexp-match #rx" 200 " (bytes->string/utf-8 status))
+    ;; -> String
+    ;; scrapes the server's metrics listener
+    (define (scrape)
+      (parameterize ([current-base (format "http://127.0.0.1:~a" (add1 (base-port)))])
+        (define r (http "GET" "/metrics"))
+        (check-equal? (resp-status r) 200)
+        (bytes->string/utf-8 (resp-body r))))
+    (define body (scrape))
     (for ([rx (list #rx"orquelo_http_requests_total{method=\"GET\",route=\"/healthz\",status=\"200\"} [1-9]"
+                    #rx"orquelo_http_requests_total{method=\"POST\",route=\"/auth/password\",status=\"204\"} [1-9]"
                     #rx"orquelo_http_requests_total{method=\"POST\",route=\"/api/s/:pid/:code/vote\",status=\"200\"} [1-9]"
                     #rx"orquelo_votes_total{result=\"ok\"} [1-9]"
                     #rx"orquelo_sse_connections{role=\"audience\"} [1-9]"
                     #rx"orquelo_sse_delivery_seconds_count{role=\"audience\"} [1-9]"
+                    #rx"\n# TYPE orquelo_accounts gauge\n"
                     #rx"\nracket_threads [1-9]")])
       (check-regexp-match rx body))
+    (define accounts (query-value db-login "SELECT count(*) FROM users"))
+    (check-regexp-match (regexp (format "\norquelo_accounts ~a\n" accounts)) body)
+    (define added (create-user! db-login "metrics@example.org" #t "Metrics"))
+    (set-user-status! db-login added "suspended")
+    (check-regexp-match (regexp (format "\norquelo_accounts ~a\n" (add1 accounts))) (scrape))
+    (query-exec db-login "DELETE FROM users WHERE id=$1" added)
+    (check-regexp-match (regexp (format "\norquelo_accounts ~a\n" accounts)) (scrape))
     (define main-port (resp-body (http "GET" "/metrics")))
     (check-false (regexp-match? #rx#"# TYPE" main-port)))
 
@@ -1079,6 +1102,44 @@
     (check-regexp-match #rx"question_id,question,status,created_at,updated_at" (resp-body csv))
     (check-false (regexp-match? (regexp (regexp-quote p1)) (bytes->string/utf-8 (resp-body csv))))
     (for ([in (list ai bi sci edi)]) (close-input-port in)))
+
+  (test-case "projector page commands require moderation and the displayed poll"
+    (define qp (new-poll! #:kind "single"))
+    (define lecture (new-session! "Projector controls"))
+    (define code (hash-ref lecture 'code))
+    (define viewer (make-string 32 #\a))
+    (define screen-code (hash-ref lecture 'screen_code))
+    (define screen-path (spath screen-code (string-append "/stream?viewer=" viewer)))
+    (define opened (post-moderator code "/poll/open" (hasheq 'poll_id (hash-ref qp 'id))))
+    (define id (hash-ref (resp-json opened) 'run_id))
+    (define (command action [run-id id] [revealed? #f])
+      (hasheq 'run_id run-id 'revealed revealed? 'action action))
+    (define (rotate action [run-id id] [revealed? #f])
+      (post-moderator code "/poll/rotation" (command action run-id revealed?)))
+    (define-values (_screen-status screen-in screen-next) (sse-open screen-path))
+    (define (screen-stage-now) (stage-of (last-snapshot screen-next)))
+    (define unauthorized (http "POST" (adm code "/poll/rotation") #:json (command "pause")))
+    (check-equal? (resp-status unauthorized) 401)
+    (check-equal? (resp-status (rotate "next" (add1 id))) 409)
+    (check-equal? (resp-status (rotate "next" id #t)) 409)
+    (check-equal? (resp-status (rotate "stop")) 422)
+    (check-false (hash-has-key? (screen-stage-now) 'rotation))
+    (define-values (_mod-status mod-in mod-next) (sse-open (adm code "/stream") #:cookies (list user-cookie)))
+    (define report (hasheq 'viewer viewer 'run_id id 'revealed #f 'open #t 'page 2 'total 3))
+    (check-equal? (resp-status (http "POST" (spath screen-code "/page") #:json report #:origin #f)) 403)
+    (check-equal? (resp-status (http "POST" (spath code "/page") #:json report)) 404)
+    (check-equal? (resp-status (http "POST" (spath screen-code "/page") #:json (hash-set report 'page 4))) 422)
+    (check-equal? (resp-status (http "POST" (spath screen-code "/page") #:json report)) 204)
+    (check-equal? (hash-ref (last-snapshot mod-next) 'screen_pages) (list (hasheq 'page 2 'total 3)))
+    (for ([action '("pause" "next" "next")]) (check-equal? (resp-status (rotate action)) 204))
+    (check-equal? (hash-ref (screen-stage-now) 'rotation) (hasheq 'paused #t 'advance 2))
+    (check-equal? (resp-status (rotate "resume")) 204)
+    (check-equal? (hash-ref (screen-stage-now) 'rotation) (hasheq 'paused #f 'advance 2))
+    (check-equal? (resp-status (post-moderator code "/poll/reveal" (hasheq 'run_id id))) 204)
+    (check-false (hash-has-key? (screen-stage-now) 'rotation))
+    (check-false (hash-has-key? (last-snapshot mod-next) 'screen_pages))
+    (close-input-port mod-in)
+    (close-input-port screen-in))
 
   (test-case "logout clears the cookie"
     (define r (http "POST" "/auth/logout" #:cookies (list user-cookie)))

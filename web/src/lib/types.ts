@@ -65,12 +65,13 @@ export type ScreenOverlay = QrOverlay | ScreenPollOverlay | ScreenQAOverlay;
 export interface ModeratorPollOverlay { type: "poll"; run_id: number; revealed: boolean }
 export interface ModeratorQAOverlay { type: "qa"; question_id: number | null }
 export type ModeratorOverlay = QrOverlay | ModeratorPollOverlay | ModeratorQAOverlay;
+export interface PollRotation { paused: boolean; advance: number }
 
 export interface ScreenSnapshot {
   session: { code: string; label: string };
   presentation: { id: number; title: string; page_count: number };
   join_url: string;
-  stage: { slide: number; overlay: ScreenOverlay | null };
+  stage: { slide: number; overlay: ScreenOverlay | null; rotation?: PollRotation };
 }
 
 export interface RunSummary {
@@ -84,7 +85,8 @@ export interface ModeratorSnapshot {
   audience_url: string;
   screen_url: string;
   connections: { audience: number; screen: number };
-  stage: { slide: number; overlay: ModeratorOverlay | null };
+  screen_pages?: { page: number; total: number }[];
+  stage: { slide: number; overlay: ModeratorOverlay | null; rotation?: PollRotation };
   // the run accepting votes, if any; it may differ from the run the overlay shows
   open_run: null | {
     run_id: number; poll_id: number; question: string; kind: PollKind; opened_at: ISOTime;

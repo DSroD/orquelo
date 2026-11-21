@@ -5,8 +5,10 @@
           [struct title-input ([title string?])]
           [struct label-input ([label string?])]
           [struct slide-input ([slide id/c])]
-          [struct open-input ([poll-id id/c])]
+          [struct open-input ([poll-id id/c] [only-if-idle? boolean?])]
           [struct resume-input ([run-id id/c])]
+          [struct rotation-input ([run-id id/c] [revealed? boolean?] [action string?])]
+          [struct screen-page-input ([viewer string?] [run-id id/c] [revealed? boolean?] [open? boolean?] [page id/c] [total id/c])]
           [struct overlay-input ([overlay (or/c qr-overlay? qa-overlay? id/c #f)])]
           [struct qa-enabled-input ([enabled? boolean?])]
           [struct qa-open-input ([open? boolean?])]
@@ -28,10 +30,14 @@
 (struct label-input (label))
 ;; A SlideInput is a (slide-input Id): the slide to show.
 (struct slide-input (slide))
-;; An OpenInput is an (open-input Id): the poll to open.
-(struct open-input (poll-id))
+;; An OpenInput is an (open-input Id Boolean): the poll to open and whether to refuse replacement.
+(struct open-input (poll-id only-if-idle?))
 ;; A ResumeInput is a (resume-input Id): the run to reopen.
 (struct resume-input (run-id))
+;; A RotationInput is a (rotation-input Id Boolean String): a page command for the displayed poll.
+(struct rotation-input (run-id revealed? action))
+;; A ScreenPageInput is a (screen-page-input String Id Boolean Boolean Id Id): a viewer's current poll page.
+(struct screen-page-input (viewer run-id revealed? open? page total))
 ;; An OverlayInput is an (overlay-input (or QrOverlay Id #f)): the overlay to show, #f = none; an Id asks
 ;; for the poll overlay of that run.
 (struct overlay-input (overlay))

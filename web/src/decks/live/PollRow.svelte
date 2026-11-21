@@ -2,9 +2,9 @@
   import { localTime } from "../../lib/time";
   import type { Poll, RunSummary } from "../../lib/types";
 
-  let { poll, first, primary, hasRun, resumable, ended, opening, resuming, onopen, onresume }: {
-    poll: Poll; first: boolean; primary: boolean; hasRun: boolean; resumable: RunSummary | null;
-    ended: boolean; opening: boolean; resuming: boolean; onopen: (pollId: number) => void; onresume: (runId: number) => void;
+  let { poll, shortcut, primary, hasRun, resumable, canStart, onopen, onresume }: {
+    poll: Poll; shortcut: boolean; primary: boolean; hasRun: boolean; resumable: RunSummary | null;
+    canStart: boolean; onopen: (pollId: number) => void; onresume: (runId: number) => void;
   } = $props();
 </script>
 
@@ -12,16 +12,12 @@
   <span class="q">{poll.question} <span class="tag">{poll.kind}</span></span>
   <span class="acts">
     {#if resumable?.poll_id === poll.id}
-      <button class="btn sm" disabled={ended || resuming} onclick={() => onresume(resumable.run_id)}
+      <button class="btn sm" disabled={!canStart} onclick={() => onresume(resumable.run_id)}
         title="Reopen voting on the {localTime(resumable.opened_at)} run; votes already cast are kept">Resume</button>
     {/if}
-    {#if primary}
-      <button class="btn sm primary" disabled={ended || opening} onclick={() => onopen(poll.id)} aria-keyshortcuts="o">Open<kbd>o</kbd></button>
-    {:else}
-      <button class="btn sm" disabled={ended || opening} onclick={() => onopen(poll.id)}
-        aria-keyshortcuts={first ? "o" : undefined}
-        title={hasRun ? "Starts a fresh vote; earlier votes stay in their own run" : undefined}>{hasRun ? "Start new vote" : "Open"}{#if first}<kbd>o</kbd>{/if}</button>
-    {/if}
+    <button class="btn sm" class:primary disabled={!canStart} onclick={() => onopen(poll.id)}
+      aria-keyshortcuts={shortcut ? "o" : undefined}
+      title={hasRun ? "Starts a fresh vote; earlier votes stay in their own run" : undefined}>{hasRun ? "Start new vote" : "Open"}{#if shortcut}<kbd>o</kbd>{/if}</button>
   </span>
 </li>
 

@@ -200,9 +200,13 @@
      (hasheq 'run_id run-id 'poll_id poll-id 'question q 'kind kind 'opened_at opened
              'options (map tally->jsexpr tallies) 'total_voters total 'allow_additional_answers allow-additional?)]))
 
-;; Id (or JSExpr) -> JSExpr
-;; the {slide, overlay} object the screen shows
-(define (stage->jsexpr slide overlay) (hasheq 'slide slide 'overlay overlay))
+;; Id JSExpr (or PollRotation #f) -> JSExpr
+;; the projected slide, overlay and optional page commands
+(define (stage->jsexpr slide overlay rotation)
+  (define base (hasheq 'slide slide 'overlay overlay))
+  (match rotation
+    [(poll-rotation paused? advance) (hash-set base 'rotation (hasheq 'paused paused? 'advance advance))]
+    [#f base]))
 
 ;; Snapshot -> JSExpr
 ;; the SSE `snapshot` payload for each role
@@ -211,17 +215,21 @@
     [(audience-snapshot session pres poll my-vote qa)
      (hasheq 'session (session-brief->jsexpr session) 'presentation (deck-brief->jsexpr pres)
              'poll (audience-poll->jsexpr poll) 'my_vote (or-null my-vote) 'qa (qa-audience->jsexpr qa))]
-    [(screen-snapshot session pres join-url (screen-stage slide overlay))
+    [(screen-snapshot session pres join-url (screen-stage slide overlay rotation))
      (hasheq 'session (session-brief->jsexpr session) 'presentation (deck-info->jsexpr pres) 'join_url join-url
-             'stage (stage->jsexpr slide (screen-overlay->jsexpr overlay)))]
+             'stage (stage->jsexpr slide (screen-overlay->jsexpr overlay) rotation))]
     [(moderator-snapshot (moderator-session code screen-code label started ended) pres audience-url screen-url
-                     (connections audience screen) (stage slide overlay) open-run runs qa)
-     (hasheq 'session (hasheq 'code code 'screen_code screen-code 'label label 'started_at started 'ended_at (or-null ended))
-             'presentation (deck-info->jsexpr pres)
-             'audience_url audience-url 'screen_url screen-url
-             'connections (hasheq 'audience audience 'screen screen)
-             'stage (stage->jsexpr slide (overlay->jsexpr overlay))
-             'open_run (moderator-open-run->jsexpr open-run) 'runs (map run-summary->jsexpr runs) 'qa (qa-state->jsexpr qa))]
+                     (connections audience screen) (stage slide overlay rotation) open-run runs qa pages)
+     (define base
+       (hasheq 'session (hasheq 'code code 'screen_code screen-code 'label label 'started_at started 'ended_at (or-null ended))
+               'presentation (deck-info->jsexpr pres)
+               'audience_url audience-url 'screen_url screen-url
+               'connections (hasheq 'audience audience 'screen screen)
+               'stage (stage->jsexpr slide (overlay->jsexpr overlay) rotation)
+               'open_run (moderator-open-run->jsexpr open-run) 'runs (map run-summary->jsexpr runs) 'qa (qa-state->jsexpr qa)))
+     (if (null? pages) base
+         (hash-set base 'screen_pages
+                   (for/list ([p pages]) (hasheq 'page (screen-page-number p) 'total (screen-page-total p)))))]
     [(editor-snapshot (session-brief code label) started ended pres audience-url open-run)
      (hasheq 'session (hasheq 'code code 'screen_code 'null 'label label 'started_at started 'ended_at (or-null ended))
              'presentation (deck-info->jsexpr pres) 'audience_url audience-url 'screen_url 'null

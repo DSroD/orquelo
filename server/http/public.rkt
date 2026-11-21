@@ -1,7 +1,7 @@
 #lang racket/base
 ;; Public (participant / screen) handlers. Each is (name deps request pid code) -> response.
 (require racket/contract/base racket/match web-server/http
-         "../qa.rkt" "../db/qa.rkt" "../auth/session.rkt" "../db/repo.rkt" "../domain.rkt" "../edition.rkt" "../live/codes.rkt" "../live/hub.rkt" "../live/state.rkt" "../metrics/app.rkt"
+         "../qa.rkt" "../db/qa.rkt" "../auth/session.rkt" "../db/repo.rkt" "../domain.rkt" "../edition.rkt" "../live/codes.rkt" "../live/hub.rkt" "../live/state.rkt" "../live/snapshot.rkt" "../metrics/app.rkt"
          "deps.rkt" "endpoint.rkt" "inputs.rkt" "json.rkt" "lookup.rkt" "sse.rkt" "validate.rkt")
 (provide (contract-out
           [session-info handler/id-code/c]
@@ -12,6 +12,7 @@
           [submit-question* audience-handler/c]
           [screen-info handler/id-code/c]
           [stream-screen handler/id-code/c]
+          [report-screen-page handler/id-code/c]
           [slides-pdf handler/id-code/c]))
 
 (define audience-handler/c
@@ -84,7 +85,24 @@
 
 (define-endpoint (stream-screen d req pid screen-code)
   #:need [s (screen-session pid screen-code)]
-  (stream-as d (session-code s) 'screen (random-uuid-v4) '()))
+  (define viewer (query-param req 'viewer))
+  (stream-as d (session-code s) 'screen (if (viewer-id? viewer) viewer "") '()))
+
+;; Any -> Boolean
+;; an ephemeral identifier for a single projector tab.
+(define (viewer-id? x) (and (string? x) (regexp-match? #px"^[0-9a-f]{32}$" x)))
+
+(define-endpoint (report-screen-page d req pid screen-code)
+  #:need [s (screen-session pid screen-code)]
+  #:json [in (screen-page-input [viewer (string 32 32)] [run-id (id)] [revealed (boolean)] [open (boolean)]
+                                [page (id)] [total (id)])]
+  (match-define (screen-page-input viewer run-id revealed? open? page total) in)
+  (unless (viewer-id? viewer) (invalid! 'viewer "invalid projector viewer"))
+  (unless (<= 1 total 30) (invalid! 'total "total must be between 1 and 30"))
+  (unless (<= 1 page total) (invalid! 'page "page must be between 1 and total"))
+  (after-db d (λ () (hub-report-screen-page! (deps-hub d) (session-code s) viewer
+                                            (poll-overlay run-id revealed?) open? (screen-page page total))))
+  (no-content))
 
 ;; Connection Id [Listof Id] -> Void
 ;; a single-choice poll takes exactly one option
@@ -137,7 +155,7 @@
       (match (submit-question! (deps-db d) (session-id s) participant (qa-text-input-text in))
         ['closed (api-error! 409 "qa_not_open" "Q&A submissions are closed")]
         ['disabled (api-error! 409 "qa_disabled" "Q&A is not enabled")]
-        ['ended (api-error! 410 "session_ended" "this lecture has ended")]
+        ['ended (api-error! 410 "session_ended" "this session has ended")]
         ['too-fast (api-error! 429 "qa_rate_limited" "wait 10 seconds between questions")]
         ['limit (api-error! 429 "qa_question_limit" "you have reached 20 questions in this session")]
         ['invalid (invalid! 'text "question must contain 1 to 1000 non-blank characters")]

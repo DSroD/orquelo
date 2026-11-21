@@ -13,7 +13,11 @@
   const s = useStream<AudienceSnapshot>(() => `/api/s/${pid}/${code}/stream?role=audience`, () => `/api/s/${pid}/${code}`);
 
   const poll = $derived(s.snap?.poll ?? null);
-  const voted = $derived(s.snap?.my_vote ?? null);
+  const ballotKey = (ids: number[] | null | undefined) => [...(ids ?? [])].sort((a, b) => a - b).join(",");
+  const voteKey = $derived(ballotKey(s.snap?.my_vote));
+  let receipt = $state<{ runId: number; previous: string[]; ids: number[] } | null>(null);
+  const pendingReceipt = $derived(receipt?.runId === poll?.run_id && receipt?.previous.includes(voteKey) ? receipt : null);
+  const voted = $derived(pendingReceipt?.ids ?? s.snap?.my_vote ?? null);
   const multi = $derived(poll?.kind === "multi");
   let activity = $state<"poll" | "qa">("poll");
   const hasQA = $derived(!!s.snap?.qa?.enabled && s.snap.qa.started);
@@ -21,12 +25,22 @@
   const blocked = (o: { id: number; exclusive: boolean }) => multi && !picked.includes(o.id) && (exclusivePicked || (o.exclusive && picked.length > 0));
 
   let picked = $state<number[]>([]);
+  let focused = $state<number | null>(null);
+  const tabStop = $derived(poll?.options.find((o) => o.id === focused)?.id ?? picked[0] ?? poll?.options[0]?.id);
   const pend = pending();
-  const busy = $derived(pend.is("vote"));
+  const busy = $derived(pend.is(`vote:${poll?.run_id}`));
   let error = $state("");
 
+  $effect(() => {
+    if (!pendingReceipt) receipt = null;
+    else {
+      const seen = pendingReceipt.previous.lastIndexOf(voteKey);
+      if (seen > 0) receipt = { ...pendingReceipt, previous: pendingReceipt.previous.slice(seen) };
+    }
+  });
+
   // Re-seed the local selection when the run or the server's record of my vote changes.
-  const seedKey = $derived(`${poll?.run_id ?? ""}:${(voted ?? []).join(",")}`);
+  const seedKey = $derived(`${poll?.run_id ?? ""}:${ballotKey(voted)}`);
   $effect(() => {
     seedKey;
     picked = untrack(() => [...(voted ?? [])]);
@@ -37,31 +51,42 @@
     picked.length > 0 && (picked.length !== (voted?.length ?? 0) || picked.some((id) => !voted?.includes(id))),
   );
 
-  const submit = (ids: number[]) => pend.run("vote", () => send(ids));
-  async function send(ids: number[]) {
-    if (!poll) return;
+  function submit(ids: number[]) {
+    if (!poll?.open) return;
+    const id = poll.run_id;
+    void pend.run(`vote:${id}`, () => send(id, ids));
+  }
+  async function send(runId: number, ids: number[]) {
+    const previous = pendingReceipt ? [...pendingReceipt.previous, ballotKey(pendingReceipt.ids)] : [voteKey];
     error = "";
     try {
-      await post<VoteResponse>(`/api/s/${pid}/${code}/vote`, { run_id: poll.run_id, option_ids: ids });
+      const vote = await post<VoteResponse>(`/api/s/${pid}/${code}/vote`, { run_id: runId, option_ids: ids });
+      if (closed && closed.runId === vote.run_id) closed = { ...closed, outcome: "voted" };
+      // A successful response can overtake snapshots for this and earlier ballots.
+      const seen = previous.lastIndexOf(voteKey);
+      if (poll?.run_id === vote.run_id && seen !== -1) {
+        receipt = { runId: vote.run_id, previous: previous.slice(seen), ids: vote.option_ids };
+      }
     } catch (e) {
-      const a = e as ApiError;
-      error = a.error === "poll_not_open" ? "Voting just closed." : a.message ?? "Could not send your vote.";
-      picked = [...(voted ?? [])];
+      if (poll?.run_id !== runId) return;
+      error = e instanceof ApiError && e.error === "poll_not_open"
+        ? "Voting just closed."
+        : "Couldn’t send your vote. Try again.";
     }
   }
 
   // Remember the poll that just disappeared so the phone says "voting closed" instead of silently going idle.
-  type Closed = { question: string; outcome: "voted" | "unsent" | "none" };
+  type Closed = { runId: number; question: string; outcome: "voted" | "unchanged" | "unsent" | "none" };
   let closed = $state<Closed | null>(null);
   let last: Closed | null = null;
   $effect(() => {
     if (poll) {
-      last = { question: poll.question, outcome: voted ? (dirty ? "unsent" : "voted") : picked.length ? "unsent" : "none" };
+      last = { runId: poll.run_id, question: poll.question, outcome: voted ? (dirty ? "unchanged" : "voted") : picked.length ? "unsent" : "none" };
       closed = null;
     } else if (last) { closed = last; last = null; }
   });
 
-  // Arrow keys move focus between the option cards (radio-group convention); Space/Enter chooses.
+  // Moving focus never casts a vote. Enter, Space and taps activate the answer.
   function arrows(e: KeyboardEvent) {
     const step = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1 }[e.key];
     if (!step) return;
@@ -72,10 +97,14 @@
     cards[(i + step + cards.length) % cards.length].focus();
   }
 
+  function leaveOptions(e: FocusEvent) {
+    if (!(e.relatedTarget instanceof Node) || !(e.currentTarget as HTMLElement).contains(e.relatedTarget)) focused = null;
+  }
+
   function tap(id: number) {
     if (!poll?.open) return;
     if (multi) picked = picked.includes(id) ? picked.filter((x) => x !== id) : [...picked, id];
-    else { picked = [id]; if (!voted?.includes(id)) void submit([id]); }
+    else { picked = [id]; if (!voted?.includes(id)) submit([id]); }
   }
 </script>
 
@@ -83,7 +112,7 @@
 
 <main>
   {#if s.phase === "ended"}
-    <section class="center"><h1>This lecture has ended</h1><p class="muted">Thanks for taking part.</p></section>
+    <section class="center"><h1>This session has ended</h1><p class="muted">Thanks for taking part.</p></section>
   {:else if s.phase === "missing"}
     <section class="center"><h1>Link not valid</h1><p class="muted">Ask your presenter for the current link.</p></section>
   {:else if s.phase === "full"}
@@ -106,31 +135,44 @@
       <section class="center" role="status">
         <h1>Voting closed</h1>
         <p class="q">{closed.question}</p>
-        <p class="muted">{closed.outcome === "voted" ? "Your vote was recorded." : closed.outcome === "unsent" ? "Voting closed before your selection was sent." : "You didn't vote this time."} Watch the screen for results.</p>
+        <p class="muted">
+          {#if closed.outcome === "voted"}Your vote was recorded.
+          {:else if closed.outcome === "unchanged"}Your previous vote was recorded. Your changes weren’t sent.
+          {:else if closed.outcome === "unsent"}Your selection wasn’t recorded.
+          {:else}You didn't vote this time.{/if}
+          Watch the screen for results.
+        </p>
       </section>
     {:else if !poll}
       <section class="center"><h1>Nothing to answer right now</h1><p class="muted">Follow the screen. A question will appear here when the presenter opens one.</p></section>
     {:else}
       <section class="poll">
-        <h1>{poll.question}</h1>
-        <p class="hint" class:ok={voted} aria-live="polite">
-          {#if voted}Vote recorded{multi ? " · change it below if you like" : " · tap another option to change"}
+        <h1 dir="auto">{poll.question}</h1>
+        <p class="hint" class:ok={voted && !busy} aria-live="polite">
+          {#if busy}Sending vote…
+          {:else if voted}Vote recorded{multi ? " · change it below if you like" : " · choose another option to change"}
           {:else}{multi ? "Choose all that apply" : "Choose one"}{/if}
         </p>
         {#if multi && poll.options.some((o) => o.exclusive)}<p class="muted exclusive-hint">Answers marked “select alone” cannot be combined. Deselect your current choices to switch.</p>{/if}
-        <div class="opts" role={multi ? "group" : "radiogroup"} aria-label={poll.question} onkeydown={multi ? undefined : arrows}>
+        {#if !multi}<p class="sr" id="single-vote-keys">Use the arrow keys to browse. Press Enter or Space to vote.</p>{/if}
+        <div class="opts" role={multi ? "group" : "radiogroup"} aria-label={poll.question} aria-describedby={multi ? undefined : "single-vote-keys"} onkeydown={multi ? undefined : arrows}
+          onfocusout={multi ? undefined : leaveOptions}>
           {#each poll.options as o (o.id)}
-            <OptionCard label={o.exclusive ? `${o.label} · select alone` : o.label} {multi} selected={picked.includes(o.id)} disabled={!poll.open || busy || blocked(o)} onclick={() => tap(o.id)} />
+            <OptionCard label={o.exclusive ? `${o.label} · select alone` : o.label} {multi} selected={picked.includes(o.id)} {busy}
+              disabled={!poll.open || blocked(o)} tabindex={multi ? undefined : o.id === tabStop ? 0 : -1}
+              onfocus={multi ? undefined : () => { focused = o.id; }} onclick={() => tap(o.id)} />
           {/each}
         </div>
-        {#if error}<p class="err" role="alert">{error}</p>{/if}
       </section>
 
-      {#if multi && poll.open}
+      {#if poll.open && (multi || error)}
         <div class="sticky">
-          <button class="btn primary" disabled={!dirty || busy} onclick={() => submit(picked)}>
-            {busy ? "Sending…" : voted ? "Change vote" : "Submit"}{picked.length ? ` (${picked.length})` : ""}
-          </button>
+          <p class="err" role="alert">{error}</p>
+          {#if multi || dirty}
+            <button class="btn primary" disabled={!dirty || busy} onclick={() => submit(picked)}>
+              {busy ? "Sending…" : error ? "Retry vote" : voted ? "Change vote" : "Submit"}{multi && picked.length ? ` (${picked.length})` : ""}
+            </button>
+          {/if}
         </div>
       {/if}
     {/if}
@@ -163,4 +205,5 @@
     background: var(--bg); border-top: 1px solid var(--line);
   }
   .sticky .btn { width: 100%; min-height: 52px; justify-content: center; font-size: 1rem; }
+  .sticky .err:not(:empty) { margin-bottom: 8px; }
 </style>

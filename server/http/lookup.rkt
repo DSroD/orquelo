@@ -67,7 +67,7 @@
 ;; Session -> Session
 ;; the session itself, or 410 once it has ended
 (define (live-or-gone s)
-  (when (session-ended-at s) (api-error! 410 "session_ended" "this lecture has ended"))
+  (when (session-ended-at s) (api-error! 410 "session_ended" "this session has ended"))
   s)
 
 ;; Deps Id String -> Session

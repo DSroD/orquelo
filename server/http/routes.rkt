@@ -138,6 +138,9 @@
      ;; public, behind the presenter-only screen code
      [("api" "screen" (integer-arg) (string-arg)) #:method "get" (public "/api/screen/:pid/:screen_code" screen-info)]
      [("api" "screen" (integer-arg) (string-arg) "stream") #:method "get" (public "/api/screen/:pid/:screen_code/stream" stream-screen)]
+     [("api" "screen" (integer-arg) (string-arg) "page") #:method "post"
+      (public "/api/screen/:pid/:screen_code/page"
+              (λ (d req pid code) (check-origin! cfg req) (report-screen-page d req pid code)))]
      [("api" "screen" (integer-arg) (string-arg) "slides.pdf") #:method "get" (public "/api/screen/:pid/:screen_code/slides.pdf" slides-pdf)]
      ;; decks
      [("api" "decks") #:method "get" (signed-in "/api/decks" list-presentations*)]
@@ -175,6 +178,7 @@
      [("api" "sessions" (string-arg) "poll" "resume") #:method "post" (signed-in "/api/sessions/:code/poll/resume" resume-poll)]
      [("api" "sessions" (string-arg) "poll" "reveal") #:method "post" (signed-in "/api/sessions/:code/poll/reveal" reveal-poll)]
      [("api" "sessions" (string-arg) "poll" "hide") #:method "post" (signed-in "/api/sessions/:code/poll/hide" hide-poll)]
+     [("api" "sessions" (string-arg) "poll" "rotation") #:method "post" (signed-in "/api/sessions/:code/poll/rotation" rotate-poll*)]
      [("api" "sessions" (string-arg) "stream") #:method "get" (signed-in "/api/sessions/:code/stream" stream-moderator)]
      [("api" "sessions" (string-arg) "export.csv") #:method "get" (signed-in "/api/sessions/:code/export.csv" export-csv)]
      [("api" "sessions" (string-arg) "results") #:method "get" (signed-in "/api/sessions/:code/results" session-results*)]

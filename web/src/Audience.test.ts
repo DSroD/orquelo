@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import Audience from "./Audience.svelte";
-import { FakeEventSource, failure, fixture, stubEventSource, stubFetch } from "./test/net";
+import { deferred, FakeEventSource, failure, fixture, stubEventSource, stubFetch } from "./test/net";
 import type { AudienceSnapshot } from "./lib/types";
 
 const user = userEvent.setup();
@@ -63,6 +63,89 @@ describe("Audience exclusive answers", () => {
     await user.click(checkbox("Added live"));
     await user.click(screen.getByRole("button", { name: "Submit (2)" }));
     expect(net.posts()[0]).toEqual({ method: "POST", url: `/api/s/7/${code}/vote`, body: { run_id: 12, option_ids: [1, 9] } });
+  });
+});
+
+describe("Audience vote recovery", () => {
+  it("keeps a failed ballot and confirms the retry before the stream catches up", async () => {
+    const snap = multi();
+    let first = true;
+    const net = await open(snap, ({ method }) => {
+      if (method === "GET") return { remember: false };
+      if (first) {
+        first = false;
+        throw new TypeError("Failed to fetch");
+      }
+      return { run_id: 12, option_ids: [1, 2] };
+    });
+    await user.click(checkbox("A"));
+    await user.click(checkbox("B"));
+    await user.click(screen.getByRole("button", { name: "Submit (2)" }));
+    const retry = await screen.findByRole("button", { name: "Retry vote (2)" });
+    expect(screen.getByRole("alert").textContent).toBe("Couldn’t send your vote. Try again.");
+    expect(screen.getAllByRole("checkbox", { checked: true })).toHaveLength(2);
+    push(snap);
+    await user.click(retry);
+    expect(await screen.findByText(/Vote recorded/)).toBeTruthy();
+    expect(net.posts()[0].body).toEqual(net.posts()[1].body);
+    push({ ...snap, my_vote: [1, 2] });
+    await user.click(checkbox("B"));
+    expect(screen.getByRole("button", { name: "Change vote (1)" })).toBeTruthy();
+  });
+
+  it("ignores a failed response after the vote changes to another poll", async () => {
+    const snap = multi();
+    const reply = deferred<Response>();
+    await open(snap, ({ method }) => method === "POST" ? reply.promise : { remember: false });
+    await user.click(checkbox("A"));
+    await user.click(screen.getByRole("button", { name: "Submit (1)" }));
+    push({ ...snap, poll: { ...snap.poll!, run_id: 13, question: "Next poll" } });
+    await screen.findByRole("heading", { name: "Next poll" });
+    await user.click(checkbox("B"));
+    reply.resolve(failure(409, { error: "poll_not_open" }));
+    await vi.waitFor(() => expect(checkbox("B").getAttribute("aria-checked")).toBe("true"));
+    expect(checkbox("A").getAttribute("aria-checked")).toBe("false");
+    expect(screen.queryByText("Voting just closed.")).toBeNull();
+  });
+
+  it("does not roll back a confirmed change when an earlier ballot arrives on the stream", async () => {
+    const snap = multi();
+    await open(snap, ({ method, body }) => method === "POST"
+      ? { run_id: 12, option_ids: (body as { option_ids: number[] }).option_ids }
+      : { remember: false });
+    await user.click(checkbox("B"));
+    await user.click(screen.getByRole("button", { name: "Submit (1)" }));
+    await screen.findByText(/Vote recorded/);
+    await user.click(checkbox("A"));
+    await user.click(screen.getByRole("button", { name: "Change vote (2)" }));
+    await vi.waitFor(() => expect(screen.getByRole<HTMLButtonElement>("button", { name: "Change vote (2)" }).disabled).toBe(true));
+    push({ ...snap, my_vote: [2] });
+    await vi.waitFor(() => expect(checkbox("A").getAttribute("aria-checked")).toBe("true"));
+    push({ ...snap, my_vote: [1, 2] });
+    await user.click(checkbox("B"));
+    expect(screen.getByRole("button", { name: "Change vote (1)" })).toBeTruthy();
+  });
+
+  it("keeps one radio Tab stop and only casts on activation", async () => {
+    const snap = multi();
+    const reply = deferred<{ run_id: number; option_ids: number[] }>();
+    const net = await open({ ...snap, poll: { ...snap.poll!, kind: "single", options: snap.poll!.options.slice(0, 2) } },
+      ({ method }) => method === "POST" ? reply.promise : { remember: false });
+    const a = screen.getByRole<HTMLButtonElement>("radio", { name: "A" });
+    const b = screen.getByRole<HTMLButtonElement>("radio", { name: "B" });
+    await user.tab();
+    expect(document.activeElement).toBe(a);
+    await user.keyboard("{ArrowRight}");
+    expect(document.activeElement).toBe(b);
+    expect([a.tabIndex, b.tabIndex]).toEqual([-1, 0]);
+    expect(net.posts()).toEqual([]);
+    await user.keyboard("{Enter}");
+    expect(net.posts()[0].body).toEqual({ run_id: 12, option_ids: [2] });
+    expect(document.activeElement).toBe(b);
+    reply.resolve({ run_id: 12, option_ids: [2] });
+    expect(await screen.findByRole("radio", { name: "B", checked: true })).toBe(b);
+    await user.tab();
+    expect(document.activeElement?.textContent).toBe("Cookie settings");
   });
 });
 

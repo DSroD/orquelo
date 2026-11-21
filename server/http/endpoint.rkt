@@ -17,7 +17,7 @@
 ;; (poll me id #:can edit) (session me code #:can moderate [#:mutation]). A capability is one of view, edit,
 ;; moderate, copy, results, owner; a deck the user cannot see is a 404, one they can see without the
 ;; capability a 403, and #:mutation adds a 410 once the session has ended.
-;; JSON types: (string lo hi) (optional-string lo hi default) (integer) (id) (boolean) (one-of s ...)
+;; JSON types: (string lo hi) (optional-string lo hi default) (integer) (id) (boolean) (optional-boolean default) (one-of s ...)
 ;; (overlay-request) (slide pages) (slide-or-null pages) (strings lo hi item-lo item-hi) (distinct-integers).
 ;; #:form [in (ctor [field type] ...)] reads multipart: (text lo hi) (count lo hi) (file).
 ;; A malformed spec is a compile-time error.
@@ -54,13 +54,14 @@
     (pattern ((~datum presentation-of) a:expr) #:with fn #'need-presentation-of #:with (arg ...) #'(a)))
 
   (define-syntax-class json-type
-    #:description "JSON field type (string, optional-string, integer, id, boolean, one-of, overlay-request, slide, slide-or-null, strings or distinct-integers)"
+    #:description "JSON field type (string, optional-string, integer, id, boolean, optional-boolean, one-of, overlay-request, slide, slide-or-null, strings or distinct-integers)"
     #:attributes (fn (arg 1))
     (pattern ((~datum string) lo:expr hi:expr) #:with fn #'body-string #:with (arg ...) #'(lo hi))
     (pattern ((~datum optional-string) lo:expr hi:expr d:expr) #:with fn #'body-optional-string #:with (arg ...) #'(lo hi d))
     (pattern ((~datum integer)) #:with fn #'body-int #:with (arg ...) #'())
     (pattern ((~datum id)) #:with fn #'body-id #:with (arg ...) #'())
     (pattern ((~datum boolean)) #:with fn #'body-bool #:with (arg ...) #'())
+    (pattern ((~datum optional-boolean) d:expr) #:with fn #'body-bool-or-default #:with (arg ...) #'(d))
     (pattern ((~datum one-of) s:str ...+) #:with fn #'body-one-of #:with (arg ...) #'(s ...))
     (pattern ((~datum overlay-request)) #:with fn #'body-overlay-request #:with (arg ...) #'())
     (pattern ((~datum slide) pages:expr) #:with fn #'body-slide #:with (arg ...) #'(pages))

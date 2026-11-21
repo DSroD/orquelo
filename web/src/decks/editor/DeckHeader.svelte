@@ -40,6 +40,7 @@
 
 <div class="bar between">
   {#if access.edit}
+    <h1 class="sr">{deck.title}</h1>
     <form class="bar title" onsubmit={(e) => { e.preventDefault(); act.run("rename", () => patch(base, { title })); }}>
       <input class="h" bind:value={title} maxlength="200" aria-label="Title" />
       <button class="btn sm" disabled={title === deck.title || !title || act.is("rename")}>Rename</button>

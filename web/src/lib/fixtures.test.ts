@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import type {
-  ModeratorSnapshot, EditorSnapshot, ApiErrorBody, AudienceSnapshot, Me, Poll, Presentation, PresentationListItem, ScreenSnapshot, SessionResults, Session, Share,
+  ModeratorSnapshot, EditorSnapshot, ApiErrorBody, AudienceSnapshot, Me, Poll, PollRotation, Presentation, PresentationListItem, ScreenSnapshot, SessionResults, Session, Share,
   VoteResponse,
 } from "./types";
 
@@ -67,6 +67,19 @@ describe("fixtures match types.ts", () => {
     if (a.stage.overlay?.type === "poll") keys(a.stage.overlay, ["type", "run_id", "revealed"]);
     if (a.open_run) keys(a.open_run, ["run_id", "poll_id", "question", "kind", "opened_at", "options", "total_voters", "allow_additional_answers"]);
     a.runs.forEach((r) => keys(r, ["run_id", "poll_id", "question", "kind", "opened_at", "closed_at", "total_voters"]));
+  });
+  it("projector page controls", () => {
+    const rotation: PollRotation = load("poll-rotation");
+    keys(rotation, ["paused", "advance"]);
+    expect(typeof rotation.paused).toBe("boolean");
+    expect(Number.isSafeInteger(rotation.advance) && rotation.advance >= 0).toBe(true);
+    const pages: NonNullable<ModeratorSnapshot["screen_pages"]> = load("screen-pages");
+    for (const position of pages) {
+      keys(position, ["page", "total"]);
+      expect(Number.isInteger(position.page) && Number.isInteger(position.total)).toBe(true);
+      expect(position.page).toBeGreaterThanOrEqual(1);
+      expect(position.page).toBeLessThanOrEqual(position.total);
+    }
   });
   it("editor projection excludes moderator data", () => {
     const e: EditorSnapshot = load("editor");

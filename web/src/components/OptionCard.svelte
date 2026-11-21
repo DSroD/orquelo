@@ -1,6 +1,7 @@
 <script lang="ts">
-  let { label, selected, multi, disabled = false, onclick }: {
-    label: string; selected: boolean; multi: boolean; disabled?: boolean; onclick: () => void;
+  let { label, selected, multi, disabled = false, busy, tabindex, onfocus, onclick }: {
+    label: string; selected: boolean; multi: boolean; disabled?: boolean; busy: boolean; tabindex?: number;
+    onfocus?: () => void; onclick: () => void;
   } = $props();
 </script>
 
@@ -10,23 +11,26 @@
   class:selected
   role={multi ? "checkbox" : "radio"}
   aria-checked={selected}
+  aria-disabled={busy || undefined}
   {disabled}
-  {onclick}
+  {tabindex}
+  {onfocus}
+  onclick={() => { if (!busy) onclick(); }}
 >
   <span class="mark" class:square={multi} aria-hidden="true"></span>
-  <span class="label">{label}</span>
+  <span class="label" dir="auto">{label}</span>
 </button>
 
 <style>
   .card {
     display: flex; align-items: center; gap: 14px; width: 100%; min-height: 56px; padding: 12px 14px;
-    text-align: left; font: inherit; font-size: 1rem; line-height: 1.4; color: var(--fg);
+    text-align: start; font: inherit; font-size: 1rem; line-height: 1.4; color: var(--fg);
     background: var(--bg2); border: 1px solid var(--line); border-radius: 2px; cursor: pointer;
     touch-action: manipulation; transition: background-color 0.18s, border-color 0.18s, box-shadow 0.18s;
   }
-  .card:hover:not(:disabled) { border-color: var(--amber); }
+  .card:hover:not(:disabled, [aria-disabled="true"]) { border-color: var(--amber); }
   .card.selected { border-color: var(--amber); background: var(--sel); box-shadow: inset 0 0 0 1px var(--amber); }
-  .card:disabled { opacity: 0.6; cursor: default; }
+  .card:disabled, .card[aria-disabled="true"] { opacity: 0.6; cursor: default; }
   .mark { flex: none; position: relative; width: 22px; height: 22px; border: 1px solid var(--dim); border-radius: 50%; transition: border-color 0.18s; }
   .mark.square { border-radius: 2px; }
   .selected .mark { border-color: var(--amber); }

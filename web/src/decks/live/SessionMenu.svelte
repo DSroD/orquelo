@@ -1,15 +1,19 @@
 <script lang="ts">
   import CopyButton from "../../components/CopyButton.svelte";
 
-  let { code, screenUrl, audienceUrl, ended, ending, canResults, onend }: {
-    code: string; screenUrl: string; audienceUrl: string; ended: boolean; ending: boolean; canResults: boolean; onend: () => void;
+  let { code, screenUrl, audienceUrl, ended, ending, canResults, letterKeys, onletterkeys, onend }: {
+    code: string; screenUrl: string; audienceUrl: string; ended: boolean; ending: boolean; canResults: boolean;
+    letterKeys: boolean; onletterkeys: (enabled: boolean) => void; onend: () => void;
   } = $props();
   let menu = $state<HTMLDetailsElement>();
   function closeOutside(e: Event) {
     if (menu?.open && !(e.target instanceof Node && menu.contains(e.target))) menu.open = false;
   }
   function escape(e: KeyboardEvent) {
-    if (e.key === "Escape" && menu?.open) menu.open = false;
+    if (e.key === "Escape" && menu?.open) {
+      menu.open = false;
+      menu.querySelector("summary")?.focus();
+    }
   }
 </script>
 
@@ -25,10 +29,12 @@
       <a class="btn" href="/sessions/{code}/results">Results</a>
       <a class="btn" href="/api/sessions/{code}/export.csv" download>Export CSV</a>
     {/if}
+    <label class="check"><input type="checkbox" checked={letterKeys} onchange={(e) => onletterkeys(e.currentTarget.checked)} /> Letter shortcuts</label>
     {#if !ended}<button class="btn danger" disabled={ending} onclick={() => confirm("End this session?") && onend()}>End session</button>{/if}
   </nav>
 </details>
 
 <style>
   .menu .pop .danger { margin-top: 6px; }
+  .menu .pop .check { min-height: 44px; }
 </style>

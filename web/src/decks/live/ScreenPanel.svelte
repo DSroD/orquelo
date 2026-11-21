@@ -1,31 +1,38 @@
 <script lang="ts">
+  import type { Snippet } from "svelte";
   import SegToggle from "../../components/SegToggle.svelte";
-  import { voters, type Choice, type Step } from "../../lib/cockpit";
+  import { STEP_LABEL, voters, type Choice, type Step } from "../../lib/cockpit";
   import { localTime } from "../../lib/time";
   import type { ModeratorOverlay, RunSummary } from "../../lib/types";
 
-  let { runs, overlay, choice, pollTarget, qaEnabled = false, can, nextStep, onchoose, ontogglereveal, onshowrun }: {
+  let { runs, overlay, choice, pollTarget, qaEnabled = false, can, nextStep, liveOnScreen, letterKeys, onchoose, ontogglereveal, onshowrun, onshowcurrent, controls }: {
     qaEnabled?: boolean; runs: RunSummary[]; overlay: ModeratorOverlay | null; choice: Choice; pollTarget: number | null;
-    can: { overlay: boolean; poll: boolean; reveal: boolean }; nextStep: Step | null;
-    onchoose: (c: Choice) => void; ontogglereveal: () => void; onshowrun: (runId: number) => void;
+    can: { overlay: boolean; poll: boolean; reveal: boolean; show: boolean }; nextStep: Step | null;
+    liveOnScreen: boolean; letterKeys: boolean;
+    onchoose: (c: Choice) => void; ontogglereveal: () => void; onshowrun: (runId: number) => void; onshowcurrent: () => void;
+    controls: Snippet;
   } = $props();
   const options = $derived<{ value: Choice; label: string; kbd?: string; disabled: boolean }[]>([
-    { value: "none", label: "Slide only", kbd: "s", disabled: !can.overlay },
-    { value: "qr", label: "QR code", kbd: "q", disabled: !can.overlay },
-    { value: "poll", label: "Poll", kbd: "p", disabled: !can.poll },
+    { value: "none", label: "Slide only", kbd: letterKeys ? "s" : undefined, disabled: !can.overlay },
+    { value: "qr", label: "QR code", kbd: letterKeys ? "q" : undefined, disabled: !can.overlay },
+    { value: "poll", label: "Poll", kbd: letterKeys && nextStep !== "show" ? "p" : undefined, disabled: !can.poll },
     ...(qaEnabled ? [{ value: "qa" as const, label: "Q&A", disabled: !can.overlay }] : []),
   ]);
 </script>
 
 <div class="bar between">
   <SegToggle {options} value={choice} onchange={onchoose} label="Over the slide" />
-  {#if overlay?.type === "poll"}
-    <button class="btn sm" class:primary={nextStep === "reveal"} disabled={!can.reveal} aria-keyshortcuts="r" onclick={ontogglereveal}>
-      {overlay.revealed ? "Hide results" : "Reveal results"}<kbd>r</kbd>
+  {#if nextStep === "show" || liveOnScreen}
+    {@const show = nextStep === "show"}
+    {@const key = show ? "p" : "r"}
+    <button class="btn sm" class:primary={show || nextStep === "reveal"} disabled={show ? !can.show : !can.reveal}
+      aria-keyshortcuts={letterKeys ? key : undefined} onclick={show ? onshowcurrent : ontogglereveal}>
+      {show ? STEP_LABEL.show : overlay?.type === "poll" && overlay.revealed ? "Hide results" : STEP_LABEL.reveal}{#if letterKeys}<kbd>{key}</kbd>{/if}
     </button>
   {/if}
 </div>
 {#if overlay?.type === "poll"}
+  {@render controls()}
   <ul class="runs" role="radiogroup" aria-label="Poll on screen">
     {#each runs as r (r.run_id)}
       {@const on = overlay.run_id === r.run_id}
@@ -38,6 +45,15 @@
       </li>
     {/each}
   </ul>
+  {#if !liveOnScreen}
+    {@const selected = runs.find((r) => r.run_id === overlay.run_id)}
+    <div class="bar between">
+      <p class="muted selected-run" id="selected-screen-run">Previous vote on screen{selected ? ` · ${selected.question}` : ""}</p>
+      <button class="btn sm" disabled={!can.reveal} aria-describedby="selected-screen-run" onclick={ontogglereveal}>
+        {overlay.revealed ? "Hide previous results" : "Reveal previous results"}
+      </button>
+    </div>
+  {/if}
 {:else}
   <p class="muted">{choice === "qr" ? "The join QR code is over the slide." : choice === "qa" ? "Q&A is on screen. Choose a question in the Q&A inbox below." : "The slide alone."}{pollTarget === null ? " Open a poll to show its results here." : ""}</p>
 {/if}
@@ -52,4 +68,5 @@
   .runs .meta { grid-column: 2; font-size: 0.85rem; color: var(--dim); white-space: nowrap; }
   .runs .meta b { color: var(--green); font-weight: 600; }
   .q { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .selected-run { overflow-wrap: anywhere; }
 </style>

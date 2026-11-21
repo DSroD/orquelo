@@ -70,7 +70,8 @@ Question     = {id, text, status:"pending"|"answered"|"dismissed", created_at, u
 | `POST /api/s/:pid/:code/vote` | `{run_id:int, option_ids:[int]}` | `200 {run_id, option_ids}` · 404 · 410 · 409 `poll_not_open` (not the session's open run) · 422 (empty, duplicates, >1 for `single`, option not in this run, exclusive option combined with any other choice) |
 | `POST /api/s/:pid/:code/qa` | `{text:string}` | `201 Question` · 404 · 410 · 409 `qa_disabled` / `qa_not_open` · 422 · 429 `qa_rate_limited` / `qa_question_limit` |
 | `GET /api/screen/:pid/:screen_code` | – | `200 {presentation:{id,title,page_count}, session:{code,label}}` (`code` = audience code, for the QR) · 404 · 410 |
-| `GET /api/screen/:pid/:screen_code/stream` | – | SSE, role screen (below) · 404 · 410 |
+| `GET /api/screen/:pid/:screen_code/stream` | Optional query `viewer` (32 lowercase hexadecimal characters generated per tab) | SSE, role screen (below) · 404 · 410 |
+| `POST /api/screen/:pid/:screen_code/page` | `{viewer:string, run_id:int, revealed:bool, open:bool, page:int, total:int}` with `1 ≤ page ≤ total ≤ 30` and matching Origin | `204`. Reports the current page to moderators if the viewer has a live screen stream and the poll view matches · 403 `bad_origin` · 404 · 410 · 422 |
 | `GET /api/screen/:pid/:screen_code/slides.pdf` | – | `200 application/pdf`, `Cache-Control: private, max-age=3600` · 404 · 410 |
 
 ### Auth
@@ -123,15 +124,16 @@ The access needed is in brackets: view, edit, moderate, results, copy, owner.
 | `POST /api/decks/:id/sessions` [moderate] | `{label}` | `201 Session` (random `code` and `screen_code`) |
 | `POST /api/sessions/:code/end` [moderate] | – | `204` · 410 if already ended. Closes the open run, broadcasts `ended`, closes all streams |
 | `POST /api/sessions/:code/slide` [moderate] | `{slide}` | `204` · 422 |
-| `POST /api/sessions/:code/poll/open` [moderate] | `{poll_id}` | `200 {run_id, options:[Option]}`. Snapshots the definition’s options and additional-answer flag, closes any open run, opens the new one and puts it on the stage as the poll overlay, revealed iff the poll has `show_results` (which stamps `revealed_at`). 404 if the poll isn't in this presentation · 409 `poll_archived` (resuming a run, showing past runs, results and CSV are unaffected) |
-| `POST /api/sessions/:code/poll/close` [moderate] | – | `204` · 409 `poll_not_open`. Closes the open run; the stage is unchanged |
+| `POST /api/sessions/:code/poll/open` [moderate] | `{poll_id, only_if_idle?:bool}` | `200 {run_id, options:[Option]}`. Snapshots the definition’s options and additional-answer flag, opens the new run and puts it on the stage as the poll overlay, revealed iff the poll has `show_results` (which stamps `revealed_at`). If `only_if_idle` is true, an existing open vote returns 409 `poll_already_open`; otherwise the existing vote is closed. 404 if the poll isn't in this presentation · 409 `poll_archived` (resuming a run, showing past runs, results and CSV are unaffected) |
+| `POST /api/sessions/:code/poll/close` [moderate] | Optional `{run_id:int}` | `204` · 409 `poll_not_open` or `poll_run_changed` if a different run is open. Closes the open run; the stage is unchanged |
 | `POST /api/sessions/:code/poll/resume` [moderate] | `{run_id:int}` | `200 {run_id, options:[Option]}`. Reopens the session's newest run, which must be closed, keeping its votes and added run options, and puts its poll overlay on the stage, revealed iff its results were ever shown. 404 if the run isn't one of this session's · 409 `run_not_resumable` (not the newest run, or already open) |
 | `POST /api/sessions/:code/poll/options` [edit] | `{run_id:int, label:string, exclusive:bool}` | `201 Option`. Append to this session’s open, opted-in run only; 409 `poll_not_open` / `additional_answers_disabled` · 422 for the 30-option limit or exclusive on a single-choice poll |
 | `POST /api/sessions/:code/qa` [moderate] | `{open:bool}` | `204`. Open or close submissions independently of polling · 409 `qa_disabled` |
 | `PATCH /api/sessions/:code/qa/questions/:id` [moderate] | `{status:"pending"|"answered"|"dismissed"}` | `204`. Status changes preserve text; answering/dismissing the selected question clears its selection · 404 for another session’s question |
 | `POST /api/sessions/:code/overlay` [moderate] | `{overlay: null \| {type:"qr"} \| {type:"poll", run_id:int} \| {type:"qa", question_id:int\|null}}` | `204`. Replaces the overlay (`null` = none). `poll` shows any run of this session, open or past, starting revealed iff its `revealed_at` is set. Q&A uses `question_id:null` for the generic invitation; a selected question must be pending and belong to this session. 404 for a foreign run/question · 409 `qa_disabled` / `question_not_pending` · 422 |
-| `POST /api/sessions/:code/poll/reveal` [moderate] | – | `204` · 409 `no_poll_overlay`. Reveals the run in the poll overlay (stamps its `revealed_at` if null) |
-| `POST /api/sessions/:code/poll/hide` [moderate] | – | `204` · 409 `no_poll_overlay`. In memory only |
+| `POST /api/sessions/:code/poll/reveal` [moderate] | Optional `{run_id:int}` | `204` · 409 `no_poll_overlay` or `poll_run_changed` if another poll is displayed. Reveals the run in the poll overlay (stamps its `revealed_at` if null) |
+| `POST /api/sessions/:code/poll/hide` [moderate] | Optional `{run_id:int}` | `204` · 409 `no_poll_overlay` or `poll_run_changed` if another poll is displayed. In memory only |
+| `POST /api/sessions/:code/poll/rotation` [moderate] | `{run_id:int, revealed:bool, action:"pause"\|"resume"\|"next"}` | `204` · 409 `no_poll_overlay` or `poll_run_changed` if the displayed run or visibility changed. Broadcasts the in-memory page controls to the screen and moderator |
 | `GET /api/sessions/:code/stream` [moderate or edit] | – | SSE, moderator or restricted editor projection. Ended sessions still stream a single snapshot and then `ended` |
 | `GET /api/sessions/:code/export.csv` [results] | – | `200 text/csv; charset=utf-8`, `Content-Disposition: attachment; filename="orquelo-<code>.csv"`. Works for ended sessions |
 | `GET /api/sessions/:code/results` [results] | – | `200 SessionResults` (see below). Works for ended sessions. Peak audiences are stored every 10 s and at run boundaries and session end, so a live session's peaks lag by up to 10 s · 404 |
@@ -187,7 +189,7 @@ A new run gets its own option IDs and an ordered snapshot of the definition. Tre
 ### SSE
 - Headers: `Content-Type: text/event-stream`, `Cache-Control: no-cache`, `X-Accel-Buffering: no`. The first bytes are `retry: 3000\n\n`.
 - The server sends `event: snapshot\ndata: <json>\n\n` immediately on connect, then whenever that subscriber's projection **changes**. The hub stores the last-sent jsexpr per subscriber and skips equal ones, so other students' votes generate no audience traffic.
-- `event: ended\ndata: {}\n\n` is sent once, after which the server closes the stream. Clients stop reconnecting and show "This lecture has ended".
+- `event: ended\ndata: {}\n\n` is sent once, after which the server closes the stream. Clients stop reconnecting and show "This session has ended".
 - Editions with audience admission can send `event: audience-full\ndata: {}\n\n` in place of the first snapshot and close the stream. Clients retry with backoff.
 - Heartbeat: the comment line `: hb\n\n` every 15 s.
 - Clients reconnect with backoff (1 s, 2 s, 4 s … capped at 15 s, reset on the first `snapshot`). A reconnect re-receives the full snapshot.
@@ -204,6 +206,7 @@ screen = {
   session: {code, label}, presentation: {id, title, page_count}, join_url: audience_url,
   stage: {
     slide: int,
+    rotation?: {paused:bool, advance:int},
     overlay: null
            | {type: "qr"}
            | {type: "qa", question:null|{id,text}, open:bool}
@@ -215,7 +218,8 @@ screen = {
 moderator = {
   session: {code, screen_code, label, started_at, ended_at}, presentation: {id, title, page_count},
   audience_url, screen_url, connections: {audience: int, screen: int},
-  stage: {slide: int, overlay: null | {type: "qr"} | {type: "poll", run_id, revealed: bool}
+  screen_pages?: [{page:int, total:int}],       // distinct page positions reported by connected projectors
+  stage: {slide: int, rotation?: {paused:bool, advance:int}, overlay: null | {type: "qr"} | {type: "poll", run_id, revealed: bool}
                                      | {type: "qa", question_id:int|null}},
   qa: {enabled:bool, open:bool, started:bool, questions:[Question], selected_question_id:int|null},
   open_run: null | {run_id, poll_id, question, kind, opened_at,
@@ -223,10 +227,14 @@ moderator = {
   runs: [{run_id, poll_id, question, kind, opened_at, closed_at, total_voters}]  // this session's history, newest first
 }
 ```
-The editor projection has the same top-level keys as moderator, but `session.screen_code`, `screen_url`, `connections`, `stage` and `qa` are `null`, and `runs` is `[]`. The `open_run` shape is unchanged.
+The editor projection omits `screen_pages` and sets `session.screen_code`, `screen_url`, `connections`, `stage` and `qa` to `null`. Its `runs` is `[]`. The `open_run` shape is unchanged.
 
 The audience sees a poll only while the open run is open: with no open run, `poll` and `my_vote` are `null` (results are on the projector only).
 
-`count` = participants that chose the option. `total_voters` = distinct participants in the run. The frontend computes percent = count / total_voters (largest-remainder rounding for `single`, plain rounding for `multi`). Options are always ordered by `idx`.
+`count` = participants that chose the option. `total_voters` = distinct participants in the run. The frontend computes percent = count / total_voters (largest-remainder rounding for `single`, plain rounding for `multi`). The API orders options by `idx`. The screen may rank them after results are revealed.
+
+An absent `rotation` means automatic paging with zero presenter advances. `advance` counts Next page commands for the current poll display, including while paused. It resets with pause state when the run, overlay, or result visibility changes. The screen lays out pages for its own viewport.
+
+`screen_pages` is present only while connected projectors have reported pages for the current poll view. Entries are sorted by `total`, then `page`. A report ends with its stream or when the displayed poll, visibility or open status changes. On close, the projector refreshes its tally and returns to page one with its pause state intact.
 
 Contract fixtures: `docs/api-fixtures/` also includes `audience-qa.json`, `moderator-qa.json`, `screen-qa.json`, `screen-qa-question.json` and `editor.json`. The original examples cover polling, idle states and QR display. A rackunit test checks that the projection output has the same key structure; vitest checks that `web/src/lib/types.ts` parses them.

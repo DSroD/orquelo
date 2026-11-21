@@ -23,7 +23,8 @@
                         [show-results? boolean?] [archived-at (or/c time/c #f)] [allow-additional? boolean?])]
           [struct poll-draft ([slide (or/c id/c #f)] [question string?] [kind kind/c] [options (listof option-draft?)]
                               [show-results? boolean?] [allow-additional? boolean?])]
-          [struct stage ([slide id/c] [overlay (or/c overlay/c #f)])]
+          [struct stage ([slide id/c] [overlay (or/c overlay/c #f)] [rotation (or/c poll-rotation? #f)])]
+          [struct poll-rotation ([paused? boolean?] [advance natural-number/c])]
           [struct qr-overlay ()]
           [struct poll-overlay ([run-id id/c] [revealed? boolean?])]
           [struct session ([id id/c] [presentation-id id/c] [code string?] [screen-code string?] [label string?]
@@ -120,9 +121,12 @@
 ;; A live session shows (or Overlay #f); #f = only the slide. More kinds are further variants.
 (struct qr-overlay () #:transparent)
 (struct poll-overlay (run-id revealed?) #:transparent)
-;; A Stage is a (stage Id (or Overlay #f))
-;; interp. all the screen shows: the slide in the background and the overlay on top of it.
-(struct stage (slide overlay) #:transparent)
+;; A PollRotation is a (poll-rotation Boolean Natural)
+;; interp. whether the poll's auto-advance is paused and how many times the presenter advanced it.
+(struct poll-rotation (paused? advance) #:transparent)
+;; A Stage is a (stage Id (or Overlay #f) (or PollRotation #f))
+;; interp. the slide, its overlay, and any page commands for the current poll overlay.
+(struct stage (slide overlay rotation) #:transparent)
 (define overlay/c (or/c qr-overlay? poll-overlay? qa-overlay?))
 
 ;; A Session is a (session Id Id String String String Id Time (or Time #f))

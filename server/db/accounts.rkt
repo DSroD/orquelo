@@ -12,6 +12,7 @@
           [set-password! (-> connection? id/c string? void?)]
           [find-credential (-> connection? string? (or/c credential? #f))]
           [list-users (-> connection? (listof user?))]
+          [count-users (-> connection? natural-number/c)]
           [find-user-id-by-verified-email (-> connection? string? (or/c id/c #f))]
           [create-user! (-> connection? (or/c string? #f) boolean? string? id/c)]
           [touch-login! (-> connection? id/c void?)]
@@ -74,6 +75,11 @@
 ;; every user, oldest first
 (define-query (list-users c) #:rows row->user
   user-select " ORDER BY u.id")
+
+;; Connection -> Natural
+;; counts all registered accounts, including suspended accounts
+(define-query (count-users c) #:value
+  "SELECT count(*) FROM users")
 
 (define-query (find-user-id-by-verified-email c email) #:maybe-value
   "SELECT id FROM users WHERE email_verified AND lower(email)=lower($1)")

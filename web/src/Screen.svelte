@@ -1,27 +1,50 @@
 <script lang="ts">
+  import { untrack } from "svelte";
   import { useStream } from "./lib/session.svelte";
   import { assertNever } from "./lib/exhaustive";
-  import type { CountedOption, ScreenSnapshot } from "./lib/types";
+  import type { ScreenSnapshot } from "./lib/types";
   import ScreenQuestion from "./components/ScreenQuestion.svelte";
   import PdfSlide from "./components/PdfSlide.svelte";
-  import ResultsBars from "./components/ResultsBars.svelte";
+  import ProjectorPoll from "./components/ProjectorPoll.svelte";
   import Qr from "./components/Qr.svelte";
 
   let { pid, code }: { pid: number; code: string } = $props();
-  const s = useStream<ScreenSnapshot>(() => `/api/screen/${pid}/${code}/stream`, () => `/api/screen/${pid}/${code}`);
+  const viewer = Array.from(crypto.getRandomValues(new Uint32Array(4)), (n) => n.toString(16).padStart(8, "0")).join("");
+  const url = $derived(`/api/screen/${pid}/${code}`);
+  const s = useStream<ScreenSnapshot>(() => `${url}/stream?viewer=${viewer}`, () => url);
   const snap = $derived(s.snap);
   const overlay = $derived(snap?.stage.overlay ?? null);
   const shortUrl = $derived(snap?.join_url.replace(/^https?:\/\//, "") ?? "");
-  // counts are non-null exactly when the poll overlay is revealed
-  const counted = (options: { id: number; label: string; count: number | null }[]): CountedOption[] =>
-    options.map((o) => ({ ...o, count: o.count ?? 0 }));
+  const rotation = $derived(snap?.stage.rotation);
+  let reports = Promise.resolve();
+
+  function reportPage(open: boolean, page: number, total: number) {
+    if (!s.connected) return;
+    const poll = untrack(() => overlay);
+    if (poll?.type !== "poll") return;
+    const endpoint = `${url}/page`;
+    const body = JSON.stringify({ viewer, run_id: poll.run_id, revealed: poll.revealed, open, page, total });
+    let superseded = false;
+    // Keep requests from this projector in order and skip measurements that are already obsolete.
+    reports = reports.then(async () => {
+      for (let attempt = 0; attempt < 2 && !superseded; attempt++) {
+        try {
+          const response = await fetch(endpoint, {
+            method: "POST", headers: { "Content-Type": "application/json" }, body, signal: AbortSignal.timeout(5000),
+          });
+          if (response.status < 500) return;
+        } catch { /* retry a failed measurement once */ }
+      }
+    });
+    return () => { superseded = true; };
+  }
 </script>
 
 <svelte:head><title>{snap ? `${snap.presentation.title} · screen` : "Screen"} · Orquelo</title></svelte:head>
 
 <div class="stage">
   {#if s.phase !== "live"}
-    <div class="msg"><h1>{s.phase === "ended" ? "This lecture has ended" : "Link not valid"}</h1></div>
+    <div class="msg"><h1>{s.phase === "ended" ? "This session has ended" : "Link not valid"}</h1></div>
   {:else if !snap}
     <div class="msg"><p>Connecting…</p></div>
   {:else}
@@ -29,21 +52,9 @@
 
     {#if overlay}
       {#if overlay.type === "poll"}
-        <section class="results">
-          <h1>{overlay.question}</h1>
-          <div class="body">
-            <ResultsBars options={counted(overlay.options)} total={overlay.total_voters} kind={overlay.kind} showCounts={overlay.revealed} />
-          </div>
-          <footer>
-            <span>
-              {overlay.total_voters} {overlay.revealed ? (overlay.total_voters === 1 ? "vote" : "votes") : "voted"}
-              · {overlay.open ? "voting open" : "voting closed"}{overlay.kind === "multi" ? " · multiple choice" : ""}
-            </span>
-            {#if !overlay.revealed}
-              <span class="join"><Qr url={snap.join_url} size={120} /><span class="joinurl">{shortUrl}</span></span>
-            {/if}
-          </footer>
-        </section>
+        {#key `${overlay.run_id}:${overlay.revealed}`}
+          <ProjectorPoll poll={overlay} joinUrl={snap.join_url} {rotation} {reportPage} />
+        {/key}
       {:else if overlay.type === "qa"}
         <section class="qa-screen">
           <h1>Q&A</h1>
@@ -72,13 +83,7 @@
 <style>
   .stage { position: fixed; inset: 0; background: #000; color: #fff; overflow: hidden; cursor: none; }
   .msg { height: 100%; display: grid; place-items: center; text-align: center; font-size: clamp(1.5rem, 4vw, 3rem); }
-  .results {
-    position: absolute; inset: 0; background: rgba(6, 10, 18, 0.94); color: #fff;
-    display: grid; grid-template-rows: auto minmax(0, 1fr) auto; gap: clamp(0.5rem, 2vh, 1.5rem);
-    padding: clamp(1rem, 4vh, 3rem) clamp(1.5rem, 5vw, 5rem); overflow: hidden;
-  }
   h1 { margin: 0; font-size: clamp(1.4rem, 5vh, 3.2rem); overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
-  .body { min-height: 0; overflow: hidden; display: flex; }
   footer { font-size: clamp(0.9rem, 2.4vh, 1.5rem); opacity: 0.85; display: flex; justify-content: space-between; align-items: flex-end; gap: 1rem; }
   .join { display: flex; align-items: center; gap: 0.75rem; background: #fff; color: #000; padding: 0.4rem 0.75rem 0.4rem 0.4rem; border-radius: 12px; }
   .join :global(img) { width: clamp(64px, 13vh, 120px); height: auto; }

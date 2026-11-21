@@ -54,6 +54,13 @@
   (start-gc-listener! (make-histogram r "racket_gc_pause_seconds" "Garbage collection pauses"
                                       '(0.0005 0.001 0.0025 0.005 0.01 0.025 0.05 0.1 0.25 0.5 1 2.5) #:labels '("kind"))))
 
+;; Connection -> [Listof Family]
+;; reads the account count and releases the scrape's connection before sending the response
+(define (account-families pool)
+  (with-handlers ([exn:fail? (λ (e) (log-error "account count scrape failed: ~a" (exn-message e)) '())])
+    (define count (dynamic-wind void (λ () (count-users pool)) (λ () (disconnect pool))))
+    (list (family "orquelo_accounts" "Registered accounts" 'gauge (list (sample "" '() count))))))
+
 ;; Config #:plugin Plugin [#:port Natural] [#:pool-size Natural] [#:on-hub (Hub -> Any)] -> (-> Void)
 ;; migrates, starts listening (and serves /metrics on the metrics port, if configured); the thunk stops it all.
 ;; `on-hub` sees the running hub, for tooling such as a profiler of the hub thread.
@@ -82,7 +89,12 @@
         (define stop-metrics
           (with-handlers ([exn:fail? (λ (e) (stop-app) (raise e))])
             (define mp (config-metrics-port cfg))
-            (if mp (listen (make-metrics-handler (app-metrics-registry metrics)) mp) void)))
+            (cond
+              [mp
+               (define registry (app-metrics-registry metrics))
+               (add-collector! registry (λ () (account-families pool)))
+               (listen (make-metrics-handler registry) mp)]
+              [else void])))
         (λ () (stop-app) (stop-metrics)))))
   (λ () (stop) (custodian-shutdown-all server-cust) (disconnect pool)))
 

@@ -15,6 +15,7 @@ concrete paths, so label cardinality stays bounded. Requests that match no route
 |---|---|---|---|
 | `orquelo_http_requests_total` | counter | method, route, status | Requests handled |
 | `orquelo_http_request_duration_seconds` | histogram | method, route | Time until the response is returned. A stream counts until it starts, not until it ends |
+| `orquelo_accounts` | gauge | | Registered accounts, including suspended accounts. Omitted if the database count fails |
 | `orquelo_votes_total` | counter | result=`ok`\|`not_open`\|`invalid` | Vote attempts that reached the database (a single-choice poll given several options is rejected earlier and not counted) |
 | `orquelo_hub_call_seconds` | histogram | | Round trip to the hub's manager thread, queue wait included |
 | `orquelo_hub_push_seconds` | histogram | | Time the manager thread spends projecting and queueing snapshots for a session's subscribers |
@@ -46,6 +47,9 @@ chunk pipe, not the client socket: it shows server-side queueing, not network de
 ## Queries
 
 ```promql
+# successful core password logins over the last 24 hours, across replicas
+sum(increase(orquelo_http_requests_total{method="POST",route="/auth/password",status="204"}[24h]))
+
 # p95 delay between the hub queueing a snapshot and the stream writing it, per role
 histogram_quantile(0.95, sum by (le, role) (rate(orquelo_sse_delivery_seconds_bucket[5m])))
 

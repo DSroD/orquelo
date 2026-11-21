@@ -18,9 +18,10 @@
   const res = useResource<Detail>(() => base);
   const act = actions({ reload: res.reload });
   const d = $derived(res.data);
+  const access = $derived(d?.disabled ? { ...d.access, edit: false, copy: false, moderate: false } : d?.access);
   // Sessions is the phone-first job (start, control, share), so the page always opens on it
   type Tab = "sessions" | "polls" | "qa" | "share";
-  const tabs = $derived<readonly Tab[]>(d?.access.owner ? ["sessions", "polls", "qa", "share"] : ["sessions", "polls", "qa"]);
+  const tabs = $derived<readonly Tab[]>(d?.access.owner && !d.disabled ? ["sessions", "polls", "qa", "share"] : ["sessions", "polls", "qa"]);
   let current = $state<Tab>("sessions");
   const label = (t: Tab) => (t === "sessions" ? "Sessions" : t === "polls" ? "Polls" : t === "qa" ? "Q&A" : "Share");
   const activePolls = $derived(d ? d.polls.filter((pl) => pl.archived_at === null).length : 0);
@@ -32,8 +33,11 @@
 <div class="page">
   <Crumbs trail={[{ label: "~ / decks", href: "/decks" }, { label: d ? slug(d.title) : "…" }]} />
   {#if act.error || res.error}<p class="err" role="alert">{act.error || res.error}</p>{/if}
-  {#if d}
-    <DeckHeader deck={d} {base} {act} {me} />
+  {#if d && access}
+    <DeckHeader deck={{ ...d, access }} {base} {act} {me} />
+    {#if d.disabled}
+      <p role="status">This presentation is disabled. You can still <a href={`${base}/pdf`} download>download the PDF</a>, <a href={base} download="presentation.json">download the deck and polls as JSON</a>, and export results.</p>
+    {/if}
 
     <Tabs {tabs} bind:selected={current} label="Deck">
       {#snippet tab(t)}
@@ -42,18 +46,18 @@
     </Tabs>
 
     <div class="stack panel" role="tabpanel" id="panel-sessions" aria-labelledby="tab-sessions" hidden={current !== "sessions"}>
-      <SessionsPanel sessions={d.sessions} {base} {act} access={d.access} />
+      <SessionsPanel sessions={d.sessions} {base} {act} {access} disabled={d.disabled} />
     </div>
 
     <div class="stack panel" role="tabpanel" id="panel-polls" aria-labelledby="tab-polls" hidden={current !== "polls"}>
-      <PollsPanel polls={d.polls} pdf="{base}/pdf" pageCount={d.page_count} {base} {act} reload={res.reload} canEdit={d.access.edit} />
+      <PollsPanel polls={d.polls} pdf="{base}/pdf" pageCount={d.page_count} {base} {act} reload={res.reload} canEdit={access.edit} />
     </div>
 
     <div class="stack panel" role="tabpanel" id="panel-qa" aria-labelledby="tab-qa" hidden={current !== "qa"}>
-      <QAPanel enabled={d.qa_enabled} canEdit={d.access.edit} {base} {act} />
+      <QAPanel enabled={d.qa_enabled} canEdit={access.edit} {base} {act} />
     </div>
 
-    {#if d.access.owner}
+    {#if access.owner && !d.disabled}
       <div class="stack panel" role="tabpanel" id="panel-share" aria-labelledby="tab-share" hidden={current !== "share"}>
         <SharePanel {base} />
       </div>

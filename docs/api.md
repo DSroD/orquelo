@@ -108,6 +108,7 @@ The access needed is in brackets: view, edit, moderate, results, copy, owner.
 | `PATCH /api/decks/:id` [edit] | `{title}` | `200 Presentation` |
 | `PUT /api/decks/:id/qa` [edit] | `{enabled:bool}` | `204`. New sessions capture this setting; active sessions are unaffected |
 | `DELETE /api/decks/:id` [owner] | – | `204`. Deletes the deck with its sessions, runs, votes, polls and shares, and its stored PDF. 409 `session_live` while any of its sessions has not ended: the stage never loses its deck mid-lecture |
+| For a disabled owned deck, an edition may include `disabled:true` in the detail response. The owner can still retrieve the PDF and session results, end a session, or delete the deck. Changes, copying, sharing and live actions return `409 deck_disabled`, and public session endpoints return 404. | | |
 | `GET /api/decks/:id/pdf` [view] | – | `200 application/pdf` |
 | `POST /api/decks/:id/polls` [edit] | `{slide, question, kind, options:[OptionDraft], show_results?:bool, allow_additional_answers?:bool}` (both flags default `false`) | `201 Poll` (`position` = max+1 within (presentation, slide)) |
 | `PUT /api/polls/:poll_id` [edit] | same as POST (full replace; option order = array order) | `200 Poll` · 409 `poll_has_runs` |

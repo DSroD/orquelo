@@ -65,6 +65,15 @@ describe("Deck editor: tabs", () => {
   });
 });
 
+it("keeps owner recovery available on a disabled deck", async () => {
+  stubFetch(() => ({ ...detail(), disabled: true }));
+  render(Editor, { id: 7, me });
+  expect((await screen.findByRole("link", { name: "download the PDF" })).getAttribute("href")).toBe(`${URL_}/pdf`);
+  expect(screen.getByRole("button", { name: "Delete" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Start session" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Copy to my decks" })).toBeNull();
+});
+
 describe("Deck editor: title", () => {
   it("rename sends the title and the draft follows the server's version", async () => {
     let title = "Intro to HtDP";

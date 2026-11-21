@@ -4,13 +4,14 @@
          "../auth/access.rkt" "../db/repo.rkt" "../domain.rkt" "../live/codes.rkt" "../live/hub.rkt" "../live/state.rkt" "../storage/store.rkt"
          "deps.rkt" "json.rkt")
 (provide found
+         require-enabled-deck!
          (contract-out
           [need-presentation (-> deps? id/c presentation?)]
           [need-poll (-> deps? id/c poll?)]
           [need-deck (-> deps? user? id/c capability/c deck?)]
           [need-user-poll (-> deps? user? id/c capability/c poll?)]
-          [need-user-session (-> deps? user? string? capability/c session?)]
-          [need-user-mutable-session (-> deps? user? string? capability/c session?)]
+          [need-user-session (->* (deps? user? string? capability/c) (#:recovery? boolean?) session?)]
+          [need-user-mutable-session (->* (deps? user? string? capability/c) (#:recovery? boolean?) session?)]
           [need-public-session (-> deps? id/c string? session?)]
           [need-screen-session (-> deps? id/c string? session?)]
           [need-live (-> deps? string? live?)]
@@ -44,25 +45,40 @@
 
 ;; Deps User Id Capability -> Deck
 ;; 404 when the deck is not visible to the user, 403 when it is but they lack the capability
-(define (need-deck d me id cap) (allowing (visible-deck d me id "presentation not found") cap))
+(define (need-deck d me id cap)
+  (define dk (allowing (visible-deck d me id "presentation not found") cap))
+  (unless (and (access-owner? (deck-access dk)) (memq cap '(view owner results)))
+    (require-enabled-deck! d id))
+  dk)
+
+;; Deps Id -> Void
+;; Rejects ordinary use once the edition has disabled the deck.
+(define (require-enabled-deck! d id)
+  (when ((current-deck-disabled?) (deps-db d) id)
+    (api-error! 409 "deck_disabled" "This presentation is disabled.")))
 
 ;; Deps User Id Capability -> Poll
 ;; the poll, 404 unless its deck is visible to the user, then 403 without the capability
 (define (need-user-poll d me id cap)
   (define pl (need-poll d id))
   (allowing (visible-deck d me (poll-presentation-id pl) "poll not found") cap)
+  (require-enabled-deck! d (poll-presentation-id pl))
   pl)
 
 ;; Deps User String Capability -> Session
 ;; the session with this code, 404 unless its deck is visible to the user, then 403 without the capability
-(define (need-user-session d me code cap)
+(define (need-user-session d me code cap #:recovery? [recovery? #f])
   (define s (need-session d code))
-  (allowing (visible-deck d me (session-presentation-id s) "unknown session") cap)
+  (define pid (session-presentation-id s))
+  (define dk (allowing (visible-deck d me pid "unknown session") cap))
+  (unless (and (access-owner? (deck-access dk)) (or recovery? (eq? cap 'results)))
+    (require-enabled-deck! d pid))
   s)
 
 ;; Deps User String Capability -> Session
 ;; the same, then 410 once the session has ended: access is checked first, so a user without it learns nothing
-(define (need-user-mutable-session d me code cap) (live-or-gone (need-user-session d me code cap)))
+(define (need-user-mutable-session d me code cap #:recovery? [recovery? #f])
+  (live-or-gone (need-user-session d me code cap #:recovery? recovery?)))
 
 ;; Session -> Session
 ;; the session itself, or 410 once it has ended
@@ -75,6 +91,7 @@
 (define (need-public-session d pid code)
   (define s (need-session d code))
   (unless (= pid (session-presentation-id s)) (not-found! "unknown session"))
+  (when ((current-deck-disabled?) (deps-db d) pid) (not-found! "unknown session"))
   (live-or-gone s))
 
 ;; Deps Id String -> Session
@@ -83,6 +100,7 @@
 (define (need-screen-session d pid screen-code)
   (define s (found (and (valid-code? screen-code) (get-session-by-screen-code (deps-db d) screen-code)) "unknown session"))
   (unless (= pid (session-presentation-id s)) (not-found! "unknown session"))
+  (when ((current-deck-disabled?) (deps-db d) pid) (not-found! "unknown session"))
   (live-or-gone s))
 
 ;; Deps String -> Live

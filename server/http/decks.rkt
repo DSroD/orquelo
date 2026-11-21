@@ -116,8 +116,9 @@
 
 (define-endpoint (get-presentation* d req me id)
   #:need [dk (deck me id #:can view)]
-  (define detail (hash-set (presentation-detail->jsexpr dk (list-polls (db d) id) (visible-sessions d dk))
+  (define result (hash-set (presentation-detail->jsexpr dk (list-polls (db d) id) (visible-sessions d dk))
                            'qa_enabled (deck-qa-enabled? (db d) id)))
+  (define detail (if ((current-deck-disabled?) (db d) id) (hash-set result 'disabled #t) result))
   (json-response
    (if (access-allows? (deck-access dk) 'moderate) detail
        (hash-update detail 'sessions (λ (sessions)
@@ -131,7 +132,17 @@
 
 (define-endpoint (delete-presentation* d req me id)
   #:need [dk (deck me id #:can owner)]
-  (match (delete-presentation! (db d) id)
+  (define c (db d))
+  (define owner (user-id me))
+  (define removed
+    (call-with-transaction c
+      (λ ()
+        ;; Keep owner's capacity changes ordered with uploads and cleanup.
+        (query-maybe-value c "SELECT id FROM users WHERE id=$1 FOR UPDATE" owner)
+        (define key (delete-presentation! c id))
+        (when (string? key) ((current-deck-removed!) c owner))
+        key)))
+  (match removed
     [#f (not-found! "presentation not found")]
     ['session-live (api-error! 409 "session_live" "a lecture is live; end it before deleting the presentation")]
     [key (when (pdf-key? key) (after-db d (λ () (store-delete! (deps-store d) key)))) (no-content)]))
@@ -172,6 +183,7 @@
 (define-endpoint (put-share* d req me id email)
   #:need [dk (deck me id #:can owner)]
   #:json [in (share-input [edit (boolean)] [moderate (boolean)] [copy (boolean)] [results (boolean)])]
+  (require-enabled-deck! d id)
   (match-define (share-input edit? moderate? copy? results?) in)
   (json-response (share->jsexpr (put-share! (db d) id (share (share-email! email) edit? moderate? copy? results?)))))
 
@@ -182,6 +194,7 @@
 ;; Deps User Id Boolean -> Response
 ;; sets the deck's archived state and answers with the deck
 (define (archive-response d me id archived?)
+  (require-enabled-deck! d id)
   (set-archived! (db d) id archived?)
   (deck-response d me id))
 
@@ -278,7 +291,7 @@
   (json-response (session-view->jsexpr (make-session-view (cfg d) s)) #:status 201))
 
 (define-endpoint (end-session* d req me code)
-  #:need [s (session me code #:can moderate #:mutation)]
+  (define s (need-user-mutable-session d me code 'moderate #:recovery? #t))
   (apply-event! d code (lecture-ended (end-session! (db d) (session-id s))))
   (no-content))
 

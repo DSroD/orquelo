@@ -185,7 +185,15 @@
      [("api" "sessions" (string-arg) "results") #:method "get" (signed-in "/api/sessions/:code/results" session-results*)]
      [("api" "sessions" (string-arg) "results.csv") #:method "get" (signed-in "/api/sessions/:code/results.csv" results-csv)]
      [else dispatch-plugin]))
-  (instrumented (deps-metrics d) (guarded (deps-db d) dispatch)))
+  (define (dispatch-with-storage req)
+    (parameterize ([current-deck-disabled? (if (storage-plugin? p)
+                                               (storage-plugin-disabled? p)
+                                               (current-deck-disabled?))]
+                   [current-deck-removed! (if (storage-plugin? p)
+                                             (storage-plugin-deck-removed! p)
+                                             (current-deck-removed!))])
+      (dispatch req)))
+  (instrumented (deps-metrics d) (guarded (deps-db d) dispatch-with-storage)))
 
 (module+ test
   (require rackunit racket/promise)

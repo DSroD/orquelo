@@ -6,7 +6,7 @@
   import type { Access, Session } from "../../lib/types";
   import { localDateTime, localTime } from "../../lib/time";
 
-  let { sessions, base, act, access }: { sessions: Session[]; base: string; act: Actions; access: Access } = $props();
+  let { sessions, base, act, access, disabled }: { sessions: Session[]; base: string; act: Actions; access: Access; disabled?: boolean } = $props();
 
   let label = $state("");
   const live = $derived(sessions.filter((s) => !s.ended_at));
@@ -26,7 +26,9 @@
             <CopyButton cls="btn sm" text={s.audience_url} label="Copy audience link" />
             {#if s.screen_url}<CopyButton cls="btn sm" text={s.screen_url} label="Copy screen link" />{/if}
             <button class="btn sm danger" disabled={act.is(`end${s.code}`)} onclick={() => confirm("End this session?") && act.run(`end${s.code}`, () => post(`/api/sessions/${s.code}/end`))}>End</button>
-          </span>{/if}
+          </span>{:else if disabled && access.owner}
+            <button class="btn sm danger" disabled={act.is(`end${s.code}`)} onclick={() => confirm("End this session?") && act.run(`end${s.code}`, () => post(`/api/sessions/${s.code}/end`))}>End</button>
+          {/if}
         </li>
       {/each}
     </ul>

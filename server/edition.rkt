@@ -9,6 +9,10 @@
           [struct (audience-plugin plugin) ([limits (-> connection? id/c limits?)]
                                            [routes routes/c]
                                            [limit audience-limit/c])]
+          [struct (storage-plugin audience-plugin)
+                   ([limits (-> connection? id/c limits?)] [routes routes/c] [limit audience-limit/c]
+                    [disabled? (-> connection? id/c boolean?)]
+                    [deck-removed! (-> connection? id/c void?)])]
           [struct route-kit ([deps deps?]
                              [signed-in (-> string? procedure? procedure?)]
                              [public (-> string? procedure? procedure?)]
@@ -32,6 +36,8 @@
 ;; An AudiencePlugin is an (audience-plugin LimitsOf Routes AudienceLimit).
 ;; interp. a plugin that also supplies the capacity of a presentation's sessions.
 (struct audience-plugin plugin (limit))
+;; A StoragePlugin adds a deck suspension check and a notification when its owner frees space.
+(struct storage-plugin audience-plugin (disabled? deck-removed!))
 (struct route-kit (deps signed-in public named check-origin!))
 (struct command (name usage run))
 (struct edition (name streams commands configure))

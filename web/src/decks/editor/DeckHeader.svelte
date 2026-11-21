@@ -51,7 +51,7 @@
   <div class="bar">
     <span class="muted data">{deck.page_count} slides</span>
     {#if access.copy}<button class="btn sm" disabled={act.is("copy")} onclick={copyDeck}>Copy to my decks</button>{/if}
-    {#if access.owner}
+    {#if access.owner && !deck.disabled}
       <button class="btn sm" disabled={act.is("archive")} onclick={() => act.run("archive", () => post(`${base}/${deck.archived_at ? "unarchive" : "archive"}`))}>{deck.archived_at ? "Unarchive" : "Archive"}</button>
     {/if}
     {#if access.owner}<button class="btn sm danger" disabled={act.is("delpres")} onclick={removeDeck}>Delete</button>{/if}

@@ -24,7 +24,7 @@
 
 ;; A Plugin is a (plugin LimitsOf Routes)
 ;; interp. what an edition adds to a running server: the limits of a user, and the routes tried before
-;; the 404/static fallback. `routes` gets the kit and the fallback and returns the dispatcher.
+;; the 404/static fallback. `routes` builds the dispatcher from the kit and fallback once at startup.
 ;; A RouteKit is a (route-kit Deps ...): the deps and the wrappers core uses for its own routes.
 ;; A Command is a (command String String Run): a CLI subcommand, its usage text and its runner.
 ;; An Edition is a (edition String [Listof MigrationStream] [Listof Command] (Env Config -> Plugin))

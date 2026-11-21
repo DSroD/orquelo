@@ -119,24 +119,28 @@
   (check-regexp-match #rx"orquelo_db_pool_wait_seconds_count [1-9]" (render (app-metrics-registry (deps-metrics d)))))
 
 ;; -> Void
-;; plugin routes are reached before the fallback, and their errors go through the core's error mapping
+;; plugin routes are built once, run before the fallback and use the core's error mapping
 (define (check-plugin-routes)
   (define-values (d pid code) (slow-hub-deps))
   (define (get path) (make-request #"GET" (string->url path) '() (delay '()) #f "127.0.0.1" 80 "127.0.0.1"))
+  (define route-builds 0)
   (define (routes kit fallback)
+    (set! route-builds (add1 route-builds))
     (λ (req)
       (case (url->string (request-uri req))
         [("/plugin/ok") (((route-kit-named kit) "/plugin/ok" (λ (req) (response/output void))) req)]
-        [("/plugin/api-error") (api-error! 418 "teapot" "short and stout")]
+        [("/plugin/api-error" "/healthz") (api-error! 418 "teapot" "short and stout")]
         [("/plugin/crash") (error "boom")]
         [else (fallback req)])))
   (define handler (make-handler d (plugin (deps-limits d) routes)))
   (define (status path) (parameterize ([current-error-port (open-output-string)]) (response-code (handler (get path)))))
+  (check-equal? route-builds 1)
   (check-equal? (status "/plugin/ok") 200)
   (check-equal? (status "/plugin/api-error") 418)
   (check-equal? (status "/plugin/crash") 500)
   (check-equal? (status "/api/nothing") 404)
-  (check-equal? (status "/healthz") 200))
+  (check-equal? (status "/healthz") 200)
+  (check-equal? route-builds 1))
 
 (module+ test
   (cond

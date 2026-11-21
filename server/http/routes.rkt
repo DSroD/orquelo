@@ -122,6 +122,7 @@
            (api-error! 404 "not_found" "no such endpoint")]
           [else (set-route! "static") (static-response (config-static-dir cfg) segs)]))
 
+  (define dispatch-plugin ((plugin-routes p) kit fallback))
   (define-values (dispatch _url)
     (dispatch-rules
      [("healthz") #:method "get" (named "/healthz" (λ (req) (text-response 200 "ok")))]
@@ -183,7 +184,7 @@
      [("api" "sessions" (string-arg) "export.csv") #:method "get" (signed-in "/api/sessions/:code/export.csv" export-csv)]
      [("api" "sessions" (string-arg) "results") #:method "get" (signed-in "/api/sessions/:code/results" session-results*)]
      [("api" "sessions" (string-arg) "results.csv") #:method "get" (signed-in "/api/sessions/:code/results.csv" results-csv)]
-     [else ((plugin-routes p) kit fallback)]))
+     [else dispatch-plugin]))
   (instrumented (deps-metrics d) (guarded (deps-db d) dispatch)))
 
 (module+ test

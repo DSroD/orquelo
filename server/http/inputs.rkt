@@ -13,7 +13,7 @@
           [struct qa-enabled-input ([enabled? boolean?])]
           [struct qa-open-input ([open? boolean?])]
           [struct qa-status-input ([status string?])]
-          [struct qa-text-input ([text string?])]
+          [struct qa-text-input ([text question-text?])]
           [struct run-option-input ([run-id id/c] [label string?] [exclusive? boolean?])]
           [struct share-input ([edit? boolean?] [moderate? boolean?] [copy? boolean?] [results? boolean?])]
           [struct show-results-input ([show-results? boolean?])]
@@ -61,7 +61,7 @@
 (struct qa-open-input (open?))
 ;; A QaStatusInput is a (qa-status-input String): a moderator's question disposition.
 (struct qa-status-input (status))
-;; A QaTextInput is a (qa-text-input String): an audience question.
+;; A QaTextInput is a (qa-text-input QuestionText): an audience question.
 (struct qa-text-input (text))
 ;; A RunOptionInput is a (run-option-input Id String Boolean): an option appended to an open run.
 (struct run-option-input (run-id label exclusive?))

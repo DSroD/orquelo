@@ -2,8 +2,8 @@
 ;; Signed-in handlers (the route table guards them with the session and Origin checks).
 ;; Each is (name deps request me path-arg ...) -> response, declared with define-endpoint; `me` is the
 ;; logged-in user.
-(require racket/contract/base racket/match racket/string db/base web-server/http
-         "../qa.rkt" "../db/qa.rkt" "../auth/access.rkt" "../config.rkt" "../db/repo.rkt" "../domain.rkt" "../export.rkt" "../live/codes.rkt" "../live/hub.rkt"
+(require racket/contract/base racket/match racket/string web-server/http
+         "../qa.rkt" "../db/qa.rkt" "../auth/access.rkt" "../config.rkt" "../db/repo.rkt" "../db/vote-export.rkt" "../domain.rkt" "../export.rkt" "../live/hub.rkt"
          "../live/load.rkt" "../live/state.rkt" "../metrics/app.rkt" "../results.rkt" "../storage/store.rkt" "../uploads.rkt"
          "deps.rkt" "endpoint.rkt" "inputs.rkt" "json.rkt" "lookup.rkt" "sse.rkt" "validate.rkt")
 (provide (contract-out
@@ -132,16 +132,7 @@
 
 (define-endpoint (delete-presentation* d req me id)
   #:need [dk (deck me id #:can owner)]
-  (define c (db d))
-  (define owner (user-id me))
-  (define removed
-    (call-with-transaction c
-      (λ ()
-        ;; Keep owner's capacity changes ordered with uploads and cleanup.
-        (query-maybe-value c "SELECT id FROM users WHERE id=$1 FOR UPDATE" owner)
-        (define key (delete-presentation! c id))
-        (when (string? key) ((current-deck-removed!) c owner))
-        key)))
+  (define removed (remove-owner-presentation! (db d) (user-id me) id (current-deck-removed!)))
   (match removed
     [#f (not-found! "presentation not found")]
     ['session-live (api-error! 409 "session_live" "a lecture is live; end it before deleting the presentation")]
@@ -213,23 +204,18 @@
 ;; the poll in the request body, shared by create and update; 422 naming the first bad field
 (define (request-poll-draft req page-count)
   (define h (request-json req))
-  (poll-draft (body-slide-or-null h 'slide page-count) (body-string h 'question 1 500)
-              (body-one-of h 'kind "single" "multi") (request-poll-options h)
-              (body-bool-or-default h 'show_results #f) (body-bool-or-default h 'allow_additional_answers #f)))
+  (make-poll-draft (body-slide-or-null h 'slide page-count) (hash-ref h 'question #f)
+                   (hash-ref h 'kind #f) (request-poll-options h)
+                   (body-bool-or-default h 'show_results #f) (body-bool-or-default h 'allow_additional_answers #f)))
 
 ;; JSObject -> [Listof OptionDraft]
-;; validates structured options at the request edge.
+;; parses option objects into trusted answer definitions
 (define (request-poll-options h)
   (define raw (hash-ref h 'options #f))
-  (unless (and (list? raw) (<= 2 (length raw) 30)) (invalid! 'options "options must have 2 to 30 items"))
-  (define options
-    (for/list ([o raw])
-      (unless (hash? o) (invalid! 'options "each option must be an object"))
-      (option-draft (string-trim (body-string o 'label 1 200)) (body-bool-or-default o 'exclusive #f))))
-  (when (ormap (λ (o) (string=? "" (option-draft-label o))) options) (invalid! 'options "option labels must not be blank"))
-  (when (and (not (equal? (hash-ref h 'kind #f) "multi")) (ormap option-draft-exclusive? options))
-    (invalid! 'options "exclusive options require multiple choice"))
-  options)
+  (unless (list? raw) (invalid! 'options "options must have 2 to 30 items"))
+  (for/list ([o raw])
+    (unless (hash? o) (invalid! 'options "each option must be an object"))
+    (make-option-draft (hash-ref o 'label #f) (body-bool-or-default o 'exclusive #f))))
 
 (define-endpoint (create-poll* d req me pid)
   #:need [dk (deck me pid #:can edit)]
@@ -276,14 +262,6 @@
   (poll-archive-response d id #f))
 
 ;; ------------------------------------------------------------------ sessions
-;; Connection Id String -> Session
-;; inserts a session under a fresh random code, retrying on a code collision
-(define (insert-session-retrying! c pid label)
-  (let loop ([attempts 5])
-    (with-handlers ([(λ (e) (and (exn:fail:sql? e) (> attempts 1) (equal? (format "~a" (exn:fail:sql-sqlstate e)) "23505")))
-                     (λ (_) (loop (sub1 attempts)))])
-      (insert-session! c pid label (random-code) (random-code)))))
-
 (define-endpoint (create-session d req me pid)
   #:need [dk (deck me pid #:can moderate)]
   #:json [in (label-input [label (optional-string 0 100 "")])]
@@ -429,7 +407,7 @@
 
 (define-endpoint (export-csv d req me code)
   #:need [s (session me code #:can results)]
-  (csv-download (format "orquelo-~a.csv" code) (render-csv export-header (export-rows (db d) (session-id s)))))
+  (csv-download (format "orquelo-~a.csv" code) (votes->csv (export-votes (db d) (session-id s)))))
 
 ;; Deps Session Presentation -> SessionResults
 (define (results-of d s p)

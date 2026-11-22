@@ -19,6 +19,7 @@
           [body-strings (-> hash? symbol? natural-number/c natural-number/c natural-number/c natural-number/c
                             (listof string?))]
           [body-distinct-ints (-> hash? symbol? (listof id/c))]
+          [body-question-text (-> hash? symbol? question-text?)]
           [form-text (-> (listof binding?) symbol? natural-number/c natural-number/c string?)]
           [form-count (-> (listof binding?) symbol? natural-number/c natural-number/c natural-number/c)]
           [form-file (-> (listof binding?) symbol? input-port?)]))
@@ -39,6 +40,10 @@
   (define v (hash-ref h key #f))
   (unless (string-between? v lo hi) (invalid! key (format "~a must be a string of ~a to ~a characters" key lo hi)))
   v)
+
+;; JSObject Symbol -> QuestionText
+;; parses a question into normalized, bounded domain text
+(define (body-question-text h key) (make-question-text (hash-ref h key #f)))
 
 ;; JSObject Symbol Natural Natural String -> String
 ;; like body-string, but an absent key gives the default

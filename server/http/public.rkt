@@ -107,7 +107,7 @@
 ;; Connection Id [Listof Id] -> Void
 ;; a single-choice poll takes exactly one option
 (define (check-choice-count! c run-id ids)
-  (when (and (equal? (run-poll-kind c run-id) "single") (> (length ids) 1))
+  (when (and (pair? ids) (pair? (cdr ids)) (choice-count-refusal (run-poll-kind c run-id) ids))
     (invalid! 'option_ids "a single-choice poll takes one option")))
 
 ;; Deps Request Id String [#:audience-limit AudienceLimit] -> Response
@@ -148,7 +148,7 @@
 ;; validates the question and checks admission before writing it
 (define-endpoint (submit-audience-question d req pid code audience-limit)
   #:need [s (public-session pid code)]
-  #:json [in (qa-text-input [text (string 1 1000)])]
+  #:json [in (qa-text-input [text (question-text)])]
   (with-participant d req pid code
     (λ (participant headers)
       (require-audience-seat! d pid code participant audience-limit)
@@ -158,7 +158,6 @@
         ['ended (api-error! 410 "session_ended" "this session has ended")]
         ['too-fast (api-error! 429 "qa_rate_limited" "wait 10 seconds between questions")]
         ['limit (api-error! 429 "qa_question_limit" "you have reached 20 questions in this session")]
-        ['invalid (invalid! 'text "question must contain 1 to 1000 non-blank characters")]
         ['not-found (not-found! "unknown session")]
         [q
          (define qa (get-qa (deps-db d) (session-id s)))

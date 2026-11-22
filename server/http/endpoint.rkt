@@ -18,11 +18,11 @@
 ;; moderate, copy, results, owner; a deck the user cannot see is a 404, one they can see without the
 ;; capability a 403, and #:mutation adds a 410 once the session has ended.
 ;; JSON types: (string lo hi) (optional-string lo hi default) (integer) (id) (boolean) (optional-boolean default) (one-of s ...)
-;; (overlay-request) (slide pages) (slide-or-null pages) (strings lo hi item-lo item-hi) (distinct-integers).
+;; (overlay-request) (slide pages) (slide-or-null pages) (strings lo hi item-lo item-hi) (distinct-integers) (question-text).
 ;; #:form [in (ctor [field type] ...)] reads multipart: (text lo hi) (count lo hi) (file).
 ;; A malformed spec is a compile-time error.
 (require (for-syntax racket/base racket/string syntax/parse "../auth/access.rkt")
-         web-server/http "json.rkt" "lookup.rkt" "validate.rkt")
+         web-server/http "../domain/parse.rkt" "json.rkt" "lookup.rkt" "validate.rkt")
 (provide define-endpoint)
 
 (begin-for-syntax
@@ -54,7 +54,7 @@
     (pattern ((~datum presentation-of) a:expr) #:with fn #'need-presentation-of #:with (arg ...) #'(a)))
 
   (define-syntax-class json-type
-    #:description "JSON field type (string, optional-string, integer, id, boolean, optional-boolean, one-of, overlay-request, slide, slide-or-null, strings or distinct-integers)"
+    #:description "JSON field type (string, optional-string, integer, id, boolean, optional-boolean, one-of, overlay-request, slide, slide-or-null, strings, distinct-integers or question-text)"
     #:attributes (fn (arg 1))
     (pattern ((~datum string) lo:expr hi:expr) #:with fn #'body-string #:with (arg ...) #'(lo hi))
     (pattern ((~datum optional-string) lo:expr hi:expr d:expr) #:with fn #'body-optional-string #:with (arg ...) #'(lo hi d))
@@ -67,7 +67,8 @@
     (pattern ((~datum slide) pages:expr) #:with fn #'body-slide #:with (arg ...) #'(pages))
     (pattern ((~datum slide-or-null) pages:expr) #:with fn #'body-slide-or-null #:with (arg ...) #'(pages))
     (pattern ((~datum strings) lo:expr hi:expr ilo:expr ihi:expr) #:with fn #'body-strings #:with (arg ...) #'(lo hi ilo ihi))
-    (pattern ((~datum distinct-integers)) #:with fn #'body-distinct-ints #:with (arg ...) #'()))
+    (pattern ((~datum distinct-integers)) #:with fn #'body-distinct-ints #:with (arg ...) #'())
+    (pattern ((~datum question-text)) #:with fn #'body-question-text #:with (arg ...) #'()))
 
   (define-syntax-class form-type
     #:description "form field type (text, count or file)"
@@ -104,10 +105,12 @@
 (define-syntax (define-endpoint stx)
   (syntax-parse stx
     [(_ (name:id d:id req:id arg:id ...) (~var c (clause #'d #'req)) ... body:expr ...+)
-     #'(define (name d req arg ...) c.def ... ... body ...)]))
+     #'(define (name d req arg ...)
+         (with-handlers ([exn:domain? (λ (e) (invalid! (exn:domain-field e) (exn-message e)))])
+           c.def ... ... body ...))]))
 
 (module+ test
-  (require rackunit syntax/macro-testing net/url racket/promise "../domain.rkt" "inputs.rkt")
+  (require rackunit syntax/macro-testing net/url racket/promise "../domain.rkt" "../qa.rkt" "inputs.rkt")
   (define (request-with body)
     (make-request #"POST" (string->url "/x") '() (delay '()) body "127.0.0.1" 80 "127.0.0.1"))
   (define (field-of thunk) (with-handlers ([exn:api? exn:api-field]) (thunk) #f))
@@ -121,6 +124,14 @@
   (define-endpoint (parse-vote d req)
     #:json [in (vote-input [run-id (id)] [option-ids (distinct-integers)])]
     in)
+  (define-endpoint (parse-question d req)
+    #:json [in (qa-text-input [text (question-text)])]
+    in)
+  (test-case "domain parsing yields trusted text or a field-specific HTTP error"
+    (define in (parse-question #f (request-with #"{\"text\":\"  Why?  \"}")))
+    (check-equal? (question-text-value (qa-text-input-text in)) "Why?")
+    (for ([body '(#"{}" #"{\"text\":false}" #"{\"text\":\"   \"}")])
+      (check-equal? (field-of (λ () (parse-question #f (request-with body)))) "text")))
   (define ok #"{\"slide\":3,\"question\":\"Q\",\"kind\":\"single\",\"options\":[\"a\",\"b\"],\"show_results\":true}")
 
   (test-case "a JSON body becomes a struct; keys use underscores"

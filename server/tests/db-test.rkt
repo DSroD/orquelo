@@ -1,6 +1,6 @@
 #lang racket/base
 ;; Integration tests: migrations and repo against Postgres (TEST_DATABASE_URL).
-(require rackunit racket/file racket/list db "support.rkt" "../db/conn.rkt" "../auth/users.rkt" "../db/accounts.rkt" "../db/migrate.rkt" "../db/repo.rkt" "../domain.rkt" "../export.rkt" "../live/codes.rkt")
+(require rackunit racket/file racket/list db "support.rkt" "../db/conn.rkt" "../auth/users.rkt" "../db/accounts.rkt" "../db/migrate.rkt" "../db/repo.rkt" "../db/vote-export.rkt" "../domain.rkt" "../export.rkt" "../live/codes.rkt")
 
 ;; (or Id #f) String Kind [Listof String] Boolean -> PollDraft
 ;; constructs an ordinary fixed-answer poll for the integration scenarios
@@ -13,9 +13,9 @@
 (define U1 "11111111-1111-4111-8111-111111111111")
 (define U2 "22222222-2222-4222-8222-222222222222")
 
-(define (setup-run! c labels kind)
+(define (setup-run! c labels kind #:slide [slide 3])
   (define pid (new-deck! c (new-owner! c) "T" 10))
-  (define poll (create-poll! c pid (simple-draft 3 "Q?" kind labels #f)))
+  (define poll (create-poll! c pid (simple-draft slide "Q?" kind labels #f)))
   (define s (insert-session! c pid "A" (random-code) (random-code)))
   (define run (open-run! c (session-id s) (poll-id poll)))
   (values pid poll s run))
@@ -107,7 +107,10 @@
     (check-true (listed? (list-presentations c owner #t) id))
     (check-false (presentation-archived-at (set-archived! c id #f)))
     (check-equal? (presentation-pdf-key c id) "x.pdf")
-    (check-equal? (delete-presentation! c id) "x.pdf")
+    (check-exn #rx"capacity update failed"
+               (λ () (remove-owner-presentation! c owner id (λ (_c _id) (error "capacity update failed")))))
+    (check-equal? (presentation-pdf-key c id) "x.pdf")
+    (check-equal? (remove-owner-presentation! c owner id void) "x.pdf")
     (check-false (delete-presentation! c id))
     (check-false (delete-presentation! c 999999)))
 
@@ -262,13 +265,14 @@
     (check-false (get-session c (session-screen-code s))))
 
   (test-case "csv export"
-    (define-values (pid poll s run) (setup-run! c '("a,1" "b") "multi"))
+    (define-values (pid poll s run) (setup-run! c '("a,1" "b") "multi" #:slide #f))
     (define ids (map option-id (poll-run-options run)))
     (cast-vote! c (poll-run-id run) (session-code s) pid U1 ids)
-    (define rows (export-rows c (session-id s)))
+    (define rows (export-votes c (session-id s)))
     (check-equal? (length rows) 2)
-    (check-equal? (list-ref (car rows) 10) "a,1")
-    (define csv (render-csv export-header rows))
+    (check-false (exported-vote-slide (car rows)))
+    (check-equal? (exported-vote-option-label (car rows)) "a,1")
+    (define csv (votes->csv rows))
     (check-regexp-match #rx"\"a,1\"" csv)
     (check-regexp-match #rx"^session_code," csv))
 

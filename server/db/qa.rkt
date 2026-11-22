@@ -1,13 +1,13 @@
 #lang racket/base
 ;; Q&A persistence. Locking the session serializes submissions, moderation and session closure.
-(require racket/contract/base racket/match racket/string db "query.rkt" "../domain.rkt" "../qa.rkt")
+(require racket/contract/base racket/match db "query.rkt" "../domain.rkt" "../qa.rkt")
 (provide (contract-out
           [deck-qa-enabled? (-> connection? id/c boolean?)]
           [set-deck-qa! (-> connection? id/c boolean? void?)]
           [get-qa (-> connection? id/c (or/c qa-state? #f))]
           [set-qa-open! (-> connection? id/c boolean? (or/c qa-state? 'not-found 'ended 'disabled))]
-          [submit-question! (-> connection? id/c string? string?
-                                (or/c qa-question? 'not-found 'ended 'disabled 'closed 'invalid 'too-fast 'limit))]
+          [submit-question! (-> connection? id/c string? question-text?
+                                (or/c qa-question? 'not-found 'ended 'disabled 'closed 'too-fast 'limit))]
           [set-question-status! (-> connection? id/c id/c qa-status/c (or/c qa-state? 'not-found 'ended))]
           [show-qa! (-> connection? id/c (or/c id/c #f) (or/c qa-state? 'not-found 'ended 'disabled 'not-pending))]
           [hide-qa! (-> connection? id/c void?)]))
@@ -120,20 +120,18 @@
 (define-query (insert-question! c sid participant body) #:row row->question
   "INSERT INTO qa_questions (session_id, participant_id, body) VALUES ($1, $2::uuid, $3) RETURNING " question-cols)
 
-;; Connection Id String String -> (or QaQuestion Symbol)
-;; trims and records a bounded question only while the session accepts submissions.
-(define (submit-question! c sid participant raw)
-  (define body (string-trim raw))
-  (if (not (<= 1 (string-length body) 1000))
-      'invalid
-      (call-with-transaction c
-        (λ ()
-          (match (lock-availability c sid)
-            [#f 'not-found]
-            [(availability _ _ _ _ _ #t) 'ended]
-            [(availability #f _ _ _ _ _) 'disabled]
-            [(availability _ #f _ _ _ _) 'closed]
-            [_ (or (submission-limit c sid participant) (insert-question! c sid participant body))])))))
+;; Connection Id String QuestionText -> (or QaQuestion Symbol)
+;; records trusted question text only while the session accepts submissions
+(define (submit-question! c sid participant text)
+  (call-with-transaction c
+    (λ ()
+      (match (lock-availability c sid)
+        [#f 'not-found]
+        [(availability _ _ _ _ _ #t) 'ended]
+        [(availability #f _ _ _ _ _) 'disabled]
+        [(availability _ #f _ _ _ _) 'closed]
+        [_ (or (submission-limit c sid participant)
+               (insert-question! c sid participant (question-text-value text)))]))))
 
 ;; Connection Id Id -> (or QaQuestion #f)
 ;; finds a question only within its owning session.

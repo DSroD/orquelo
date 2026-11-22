@@ -1,8 +1,8 @@
 #lang racket/base
-;; All SQL lives here. Each define-query is one statement; functions take a connection first and
+;; Deck, poll, session and vote persistence. Each define-query is one statement; functions take a connection first and
 ;; return domain structs (never hashes). Timestamps are formatted in SQL with iso(); SQL NULL becomes #f.
-(require racket/contract/base racket/list racket/match racket/vector db "accounts.rkt" "query.rkt" "../auth/access.rkt" "../domain.rkt")
-(provide export-header limit-refusal/c limits-of/c
+(require racket/contract/base racket/list racket/match racket/vector db "accounts.rkt" "query.rkt" "../live/codes.rkt" "../auth/access.rkt" "../domain.rkt")
+(provide limit-refusal/c limits-of/c
          (contract-out
           [add-presentation! (-> connection? limits-of/c id/c string? id/c natural-number/c (or/c id/c limit-refusal/c))]
           [copy-presentation! (-> connection? limits-of/c id/c id/c (or/c id/c limit-refusal/c #f))]
@@ -16,6 +16,7 @@
           [list-presentations (-> connection? id/c boolean? (listof presentation-listing?))]
           [rename-presentation! (-> connection? id/c string? (or/c presentation? #f))]
           [set-archived! (-> connection? id/c boolean? (or/c presentation? #f))]
+          [remove-owner-presentation! (-> connection? id/c id/c (-> connection? id/c void?) (or/c string? 'session-live #f))]
           [delete-presentation! (-> connection? id/c (or/c string? 'session-live #f))]
           [get-poll (-> connection? id/c (or/c poll? #f))]
           [list-polls (-> connection? id/c (listof poll?))]
@@ -25,6 +26,7 @@
           [delete-poll! (-> connection? id/c (or/c 'ok 'has-runs #f))]
           [duplicate-poll! (-> connection? id/c (or/c poll? #f))]
           [set-poll-archived! (-> connection? id/c boolean? (or/c poll? 'has-no-runs #f))]
+          [insert-session-retrying! (-> connection? id/c string? session?)]
           [insert-session! (-> connection? id/c string? string? string? session?)]
           [get-session (-> connection? string? (or/c session? #f))]
           [get-session-by-screen-code (-> connection? string? (or/c session? #f))]
@@ -46,8 +48,7 @@
           [participant-option-ids (-> connection? id/c string? (listof id/c))]
           [record-peaks! (-> connection? string? natural-number/c (or/c id/c #f) natural-number/c void?)]
           [results-totals-row (-> connection? id/c results-totals?)]
-          [run-results (-> connection? id/c (listof run-result?))]
-          [export-rows (-> connection? id/c (listof list?))]))
+          [run-results (-> connection? id/c (listof run-result?))]))
 
 ;; ---------------------------------------------------------------- helpers
 ;; Any -> Any
@@ -205,6 +206,16 @@
       (cond [(not (lock-presentation c id)) #f]
             [(live-session? c id) 'session-live]
             [else (delete-sessions! c id) (delete-presentation-row c id)]))))
+
+;; Connection Id Id (Connection Id -> Void) -> (or String 'session-live #f)
+;; serializes an authorized removal and its capacity update with uploads by the same owner
+(define (remove-owner-presentation! c owner id removed!)
+  (call-with-transaction c
+    (λ ()
+      (lock-user! c owner)
+      (define key (delete-presentation! c id))
+      (when (string? key) (removed! c owner))
+      key)))
 
 ;; ---------------------------------------------------------------- polls
 (define poll-select
@@ -391,6 +402,14 @@
 (define-query (insert-session! c pid label code screen-code) #:row row->session
   "INSERT INTO lecture_sessions (presentation_id, label, code, screen_code, qa_enabled) SELECT id, $2, $3, $4, qa_enabled FROM presentations WHERE id=$1 RETURNING " session-cols)
 
+;; Connection Id String -> Session
+;; inserts a session under a fresh random code, retrying on a code collision
+(define (insert-session-retrying! c pid label)
+  (let loop ([attempts 5])
+    (with-handlers ([(λ (e) (and (exn:fail:sql? e) (> attempts 1) (equal? (sqlstate e) "23505")))
+                     (λ (_) (loop (sub1 attempts)))])
+      (insert-session! c pid label (random-code) (random-code)))))
+
 (define-query (get-session c code) #:maybe-row row->session
   "SELECT " session-cols " FROM lecture_sessions WHERE code=$1")
 
@@ -516,7 +535,7 @@
 (define (reject! reason) (raise (reject "vote rejected" (current-continuation-marks) reason)))
 
 (define-query (lock-open-run c run-id code pid) #:maybe-value
-  "SELECT r.poll_id FROM poll_runs r JOIN lecture_sessions s ON s.id = r.session_id
+  "SELECT p.kind FROM poll_runs r JOIN polls p ON p.id=r.poll_id JOIN lecture_sessions s ON s.id = r.session_id
    WHERE r.id=$1 AND s.code=$2 AND s.presentation_id=$3 AND r.closed_at IS NULL AND s.ended_at IS NULL FOR SHARE OF r")
 
 ;; Connection String Id -> (or Id #f)
@@ -546,9 +565,9 @@
     (call-with-transaction c
       (λ ()
         (unless (lock-vote-session c code pid) (reject! 'poll-not-open))
-        (define poll-id (or (lock-open-run c run-id code pid) (reject! 'poll-not-open)))
+        (define kind (or (lock-open-run c run-id code pid) (reject! 'poll-not-open)))
         (define opts (run-options c run-id))
-        (unless (valid-ballot? (run-poll-kind c run-id) opts option-ids) (reject! 'invalid))
+        (when (ballot-refusal kind opts option-ids) (reject! 'invalid))
         (define previous (participant-option-ids c run-id participant))
         (upsert-vote! c run-id participant (and (pair? previous) (not (equal? previous (sort option-ids <)))))
         (clear-vote-options! c run-id participant)
@@ -594,23 +613,6 @@
                [else (insert-run-option! c run-id (length options)
                                         (option-draft-label draft) (option-draft-exclusive? draft))])]))))
 
-;; Kind [Listof Option] [Listof Id] -> Boolean
-;; a nonempty distinct ballot of this run, with exclusive options chosen alone
-(define (valid-ballot? kind options ids)
-  (and (pair? ids) (= (length ids) (length (remove-duplicates ids)))
-       (or (equal? kind "multi") (= (length ids) 1))
-       (for/and ([id ids]) (findf (λ (o) (= id (option-id o))) options))
-       (or (= (length ids) 1)
-           (for/and ([o options] #:when (memv (option-id o) ids)) (not (option-exclusive? o))))))
-
-;; ---------------------------------------------------------------- export
-(define export-header
-  '("session_code" "session_label" "presentation_title" "run_id" "run_opened_at" "poll_id" "slide" "question"
-    "kind" "option_idx" "option_label" "participant_id" "voted_at"))
-
-(define-query (export-rows c session-id) #:rows vector->list
-  "SELECT session_code, session_label, presentation_title, run_id, iso(run_opened_at), poll_id, slide, question, kind, option_idx, option_label, participant_id::text, iso(voted_at)
-   FROM analysis_votes WHERE session_id=$1 ORDER BY run_opened_at, participant_id, option_idx")
 ;; ---------------------------------------------------------------- engagement
 (define-query (update-session-peak! c code peak) #:exec
   "UPDATE lecture_sessions SET peak_audience = GREATEST(coalesce(peak_audience, 0), $2) WHERE code=$1")

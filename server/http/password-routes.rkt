@@ -3,7 +3,7 @@
 ;; edition's plugin.
 (require racket/contract/base racket/list racket/string web-server/dispatch web-server/http
          "../auth/password.rkt" "../auth/session.rkt" "../auth/throttle.rkt" "../auth/users.rkt"
-         "../config.rkt" "../db/accounts.rkt" "../domain.rkt" "../edition.rkt" db
+         "../config.rkt" "../db/accounts.rkt" "../domain.rkt" "../edition.rkt"
          "deps.rkt" "endpoint.rkt" "inputs.rkt" "json.rkt")
 (provide (contract-out
           [make-password-routes (-> throttle? boolean? routes/c)]
@@ -71,7 +71,7 @@
     (unless (valid-new-password? (password-change-input-new in))
       (api-error! 422 "invalid" "the new password must be 10 to 1024 bytes" "new"))
     (define hash (after-db d (λ () (hash-password (password-change-input-new in)))))
-    (call-with-transaction db (λ () (set-password! db (user-id me) hash) (bump-session-epoch! db (user-id me))))
+    (replace-password! db (user-id me) hash)
     (throttle-clear! throttle email ip)
     (no-content #:headers (list (session-cookie db (deps-cfg d) (user-id me)))))
 

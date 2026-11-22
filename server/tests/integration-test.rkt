@@ -229,6 +229,16 @@
 
   (test-case "poll validation"
     (define (post j) (as-user "POST" (format "/api/decks/~a/polls" pid) #:json j))
+    (define valid (hasheq 'slide 1 'question "Q" 'kind "single" 'options (option-inputs '("a" "b"))))
+    (for ([field '(question kind)] [value '(#f "unknown")])
+      (define r (post (hash-set valid field value)))
+      (check-equal? (resp-status r) 422)
+      (check-equal? (hash-ref (resp-json r) 'field) (symbol->string field)))
+    (for ([options (list (option-inputs '(" " "b"))
+                         (list (hasheq 'label "a" 'exclusive #t) (hasheq 'label "b" 'exclusive #f)))])
+      (define r (post (hash-set valid 'options options)))
+      (check-equal? (resp-status r) 422)
+      (check-equal? (hash-ref (resp-json r) 'field) "options"))
     (check-equal? (hash-ref (resp-json (post (hasheq 'slide 99 'question "Q" 'kind "single" 'options (option-inputs '("a" "b"))))) 'field) "slide")
     (check-equal? (hash-ref (resp-json (post (hasheq 'slide 1 'question "Q" 'kind "single" 'options (option-inputs '("a"))))) 'field) "options")
     (check-equal? (resp-status (as-user "POST" (format "/api/decks/~a/polls" pid) #:data #"{nope")) 400))
@@ -1026,6 +1036,10 @@
       (http "POST" (public-url "/qa") #:json (hasheq 'text text) #:cookies (list (pid-cookie code who))))
     (check-equal? (resp-status (ask "Before opening" p1)) 409)
     (check-equal? (resp-status (control "POST" "/qa" (hasheq 'open #t))) 204)
+    (for ([text (list " \n\t " (make-string 1001 #\a))])
+      (define r (ask text p1))
+      (check-equal? (resp-status r) 422)
+      (check-equal? (hash-ref (resp-json r) 'field) "text"))
     ;; Deck changes do not disable Q&A in an already-created session.
     (check-equal? (resp-status (owner "PUT" "/qa" (hasheq 'enabled #f))) 204)
     (define-values (_a ai an) (sse-open (string-append (public-url "/stream") "?role=audience") #:cookies (list (pid-cookie code p1))))

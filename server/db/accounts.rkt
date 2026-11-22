@@ -10,6 +10,8 @@
           [bump-session-epoch! (-> connection? id/c natural-number/c)]
           [set-user-status! (-> connection? id/c status/c void?)]
           [set-password! (-> connection? id/c string? void?)]
+          [replace-password! (-> connection? id/c string? void?)]
+          [create-password-user! (-> connection? string? string? string? (or/c id/c 'email-taken))]
           [find-credential (-> connection? string? (or/c credential? #f))]
           [list-users (-> connection? (listof user?))]
           [count-users (-> connection? natural-number/c)]
@@ -59,6 +61,26 @@
 (define-query (set-password! c id hash) #:exec
   "INSERT INTO password_credentials (user_id, hash) VALUES ($1, $2)
    ON CONFLICT (user_id) DO UPDATE SET hash=EXCLUDED.hash, updated_at=now()")
+
+;; Connection Id String -> Void
+;; installs the new password hash and revokes existing sessions atomically
+(define (replace-password! c id hash)
+  (call-with-transaction c
+    (λ ()
+      (set-password! c id hash)
+      (bump-session-epoch! c id)
+      (void))))
+
+;; Connection String String String -> (or Id 'email-taken)
+;; creates a verified account and its password credential together
+(define (create-password-user! c email name hash)
+  (with-handlers ([exn:fail:sql?
+                   (λ (e) (if (equal? (exn:fail:sql-sqlstate e) "23505") 'email-taken (raise e)))])
+    (call-with-transaction c
+      (λ ()
+        (define id (create-user! c email #t name))
+        (set-password! c id hash)
+        id))))
 
 ;; Vector -> Credential
 (define (row->credential r)

@@ -1,0 +1,14 @@
+---
+name: orquelo-architecture
+description: Use when designing, changing or reviewing Orquelo's backend architecture, including module responsibilities, domain modelling, parsing, persistence and effect boundaries.
+---
+
+# Orquelo architecture
+
+- Keep dependency direction toward the domain. Domain modules define values and pure transformations without importing HTTP, database or storage modules. HTTP handlers and CLI commands coordinate effects through explicit module interfaces. Use a separate application module when a shared workflow warrants one.
+- Follow “parse, don't validate.” Domain models are trusted. Establish their invariants when turning untrusted input into domain values, using parsers or smart constructors that either produce those values or report meaningful failures. Ensure construction preserves the invariants, including through alternate constructors and later mutation. Downstream code consumes domain values without revalidating their content.
+- Parse transport structure in HTTP and CLI adapters and domain meaning in pure domain functions. Keep normalization and content rules with the domain model. Adapters translate parsing failures into public errors. Distinguish a model's intrinsic invariants from relationships to other values and conditions that can change over time. A trusted poll definition does not imply that the poll is currently open or that its caller still has permission to use it.
+- Keep SQL, row locks, SQLSTATE handling and transaction boundaries in repository modules under `server/db/`. Use the existing `define-query` forms for individual statements. Decode row vectors and SQL NULL there and return domain structs, scalars or documented outcomes. Keep JSON and CSV field ordering in their encoders, and request parsing, HTTP status codes, cookies and CLI output with their respective adapters.
+- Give repository operations names that express the caller's intent, such as `replace-password!`. Establish conditions involving mutable database state with appropriate locks or conditional writes, and keep writes that enforce one invariant in the same transaction. These are concurrency requirements, separate from trusting domain models. Replacing a password revokes existing sessions atomically; refreshing its hash at login preserves the session epoch.
+- Keep edition callbacks that participate in a database invariant on the same connection and inside the transaction. Keep PDF transfers and live hub notifications outside it. Access PDFs through `storage/store.rkt`, keep `live/state.rkt` pure, and use the existing `after-db` mechanism when releasing a pooled connection around external work.
+- Exercise parsers and pure transformations with rackunit and persistence through the ephemeral Postgres suite. Verify that malformed input produces a meaningful failure, successful parsing yields usable domain values, and failed writes roll back. Check observable API and export behaviour when moving boundaries.

@@ -1,7 +1,7 @@
 #lang racket/base
 ;; Domain data, one struct per concept. SQL rows become these in db/repo.rkt; hashes and JSON
 ;; exist only at the edges (http/json.rkt). Contracts are enforced on construction.
-(require racket/contract/base racket/match "qa.rkt")
+(require racket/contract/base racket/match racket/list racket/string "qa.rkt" "domain/parse.rkt")
 (provide id/c kind/c time/c overlay/c status/c
          (contract-out
           [struct limits ([max-upload-bytes natural-number/c] [storage-quota-bytes (or/c natural-number/c #f)]
@@ -18,11 +18,13 @@
           [struct presentation-listing ([deck deck?] [live-sessions natural-number/c])]
           [struct option ([id id/c] [idx natural-number/c] [label string?] [exclusive? boolean?])]
           [struct option-draft ([label string?] [exclusive? boolean?])]
+          [make-option-draft (-> any/c any/c option-draft?)]
           [struct poll ([id id/c] [presentation-id id/c] [slide (or/c id/c #f)] [position natural-number/c]
                         [question string?] [kind kind/c] [options (listof option?)] [has-runs? boolean?]
                         [show-results? boolean?] [archived-at (or/c time/c #f)] [allow-additional? boolean?])]
           [struct poll-draft ([slide (or/c id/c #f)] [question string?] [kind kind/c] [options (listof option-draft?)]
                               [show-results? boolean?] [allow-additional? boolean?])]
+          [make-poll-draft (-> any/c any/c any/c any/c any/c any/c poll-draft?)]
           [struct stage ([slide id/c] [overlay (or/c overlay/c #f)] [rotation (or/c poll-rotation? #f)])]
           [struct poll-rotation ([paused? boolean?] [advance natural-number/c])]
           [struct qr-overlay ()]
@@ -34,6 +36,12 @@
           [struct poll-run ([id id/c] [poll-id id/c] [question string?] [kind kind/c]
                             [opened-at time/c] [closed-at (or/c time/c #f)]
                             [options (listof option?)] [votes ballots?] [allow-additional? boolean?])]
+          [choice-count-refusal (-> (or/c kind/c #f) (listof id/c) (or/c 'single-choice #f))]
+          [ballot-refusal (-> kind/c (listof option?) (listof id/c) (or/c 'single-choice 'invalid #f))]
+          [struct exported-vote ([session-code string?] [session-label string?] [presentation-title string?]
+                                 [run-id id/c] [opened-at time/c] [poll-id id/c] [slide (or/c id/c #f)]
+                                 [question string?] [kind kind/c] [option-idx natural-number/c] [option-label string?]
+                                 [participant string?] [voted-at time/c])]
           [ballots? (-> any/c boolean?)]
           [empty-ballots ballots?]
           [votes->ballots (-> (listof vote?) ballots?)]
@@ -99,9 +107,23 @@
 ;; interp. one answer of a poll or run; an exclusive answer must be chosen alone.
 (struct option (id idx label exclusive?) #:transparent)
 
+;; Any Any Symbol -> (values String Boolean)
+;; constructs a bounded, nonblank answer definition
+(define (parse-option-draft label exclusive? _)
+  (unless (and (string? label) (<= 1 (string-length label) 200))
+    (domain-error! 'label "label must be a string of 1 to 200 characters"))
+  (define trimmed (string-trim label))
+  (when (string=? trimmed "") (domain-error! 'options "option labels must not be blank"))
+  (unless (boolean? exclusive?) (domain-error! 'exclusive "exclusive must be a boolean"))
+  (values (string->immutable-string trimmed) exclusive?))
+
 ;; An OptionDraft is an (option-draft String Boolean).
-;; interp. an answer label and whether it must be selected alone.
-(struct option-draft (label exclusive?) #:transparent)
+;; interp. a bounded, nonblank answer label and whether it must be selected alone.
+(struct option-draft (label exclusive?) #:transparent #:guard parse-option-draft)
+
+;; Any Any -> OptionDraft
+;; parses untrusted answer fields into a trusted definition
+(define (make-option-draft label exclusive?) (option-draft label exclusive?))
 
 ;; A Poll is a (poll Id Id (or Id #f) Natural String Kind [Listof Option] Boolean Boolean (or Time #f) Boolean)
 ;; interp. a question attached to a slide (#f = none); has-runs? once it was ever opened;
@@ -110,9 +132,32 @@
 (struct poll (id presentation-id slide position question kind options has-runs? show-results? archived-at allow-additional?)
   #:transparent)
 
-;; A PollDraft is a (poll-draft (or Id #f) String Kind [Listof OptionDraft] Boolean Boolean)
-;; interp. the editable content of a poll, before it is stored.
-(struct poll-draft (slide question kind options show-results? allow-additional?) #:transparent)
+;; Any Any Any Any Any Any Symbol -> (values (or Id #f) String Kind [Listof OptionDraft] Boolean Boolean)
+;; constructs a poll definition whose content rules hold; slide bounds depend on its presentation
+(define (parse-poll-draft slide question kind options show-results? allow-additional? _)
+  (unless (or (not slide) (exact-positive-integer? slide))
+    (domain-error! 'slide "slide must be null or a positive integer"))
+  (unless (and (string? question) (<= 1 (string-length question) 500))
+    (domain-error! 'question "question must be a string of 1 to 500 characters"))
+  (unless (member kind '("single" "multi")) (domain-error! 'kind "kind must be single or multi"))
+  (unless (and (list? options) (<= 2 (length options) 30) (andmap option-draft? options))
+    (domain-error! 'options "options must have 2 to 30 items"))
+  (when (and (equal? kind "single") (ormap option-draft-exclusive? options))
+    (domain-error! 'options "exclusive options require multiple choice"))
+  (unless (boolean? show-results?) (domain-error! 'show_results "show_results must be a boolean"))
+  (unless (boolean? allow-additional?) (domain-error! 'allow_additional_answers "allow_additional_answers must be a boolean"))
+  (values slide (string->immutable-string question) (string->immutable-string kind)
+          options show-results? allow-additional?))
+
+;; A PollDraft is a (poll-draft (or Id #f) String Kind [Listof OptionDraft] Boolean Boolean).
+;; interp. bounded poll content with 2 to 30 answers; exclusive answers require multi choice.
+(struct poll-draft (slide question kind options show-results? allow-additional?)
+  #:transparent #:guard parse-poll-draft)
+
+;; Any Any Any Any Any Any -> PollDraft
+;; parses untrusted poll fields into a trusted definition
+(define (make-poll-draft slide question kind options show-results? allow-additional?)
+  (poll-draft slide question kind options show-results? allow-additional?))
 
 ;; An Overlay is one of:
 ;;  - (qr-overlay)             interp. the join QR + URL covers the slide
@@ -141,6 +186,25 @@
 ;; A Vote is a (vote String [Listof Id])
 ;; interp. a participant's chosen option ids, ordered by option idx.
 (struct vote (participant option-ids) #:transparent)
+
+;; An ExportedVote is one selected option of a recorded ballot, with its lecture and poll context.
+(struct exported-vote (session-code session-label presentation-title run-id opened-at poll-id slide
+                                    question kind option-idx option-label participant voted-at) #:transparent)
+
+;; (or Kind #f) [Listof Id] -> (or 'single-choice #f)
+;; identifies a single-choice ballot with multiple selections
+(define (choice-count-refusal kind ids)
+  (and (equal? kind "single") (pair? ids) (pair? (cdr ids)) 'single-choice))
+
+;; Kind [Listof Option] [Listof Id] -> (or 'single-choice 'invalid #f)
+;; checks a ballot against the options offered by its run
+(define (ballot-refusal kind options ids)
+  (or (choice-count-refusal kind ids)
+      (and (or (null? ids) (check-duplicates ids)
+               (for/or ([id (in-list ids)])
+                 (define o (findf (λ (o) (= id (option-id o))) options))
+                 (or (not o) (and (option-exclusive? o) (pair? (cdr ids))))))
+           'invalid)))
 
 ;; A Ballots is a (ballots (Hash String [Listof Id]) (Hash Id Natural))
 ;; interp. each participant's chosen option ids (ordered by option idx) and how many participants
@@ -209,6 +273,44 @@
 
 (module+ test
   (require rackunit)
+  (test-case "poll drafts establish content invariants for every caller"
+    (define options (list (option-draft " A " #f) (option-draft "B" #f)))
+    (define draft (poll-draft #f "Q" "single" options #f #f))
+    (check-equal? (option-draft-label (car (poll-draft-options draft))) "A")
+    (check-exn exn:domain? (λ () (option-draft " \t " #f)))
+    (check-exn exn:domain? (λ () (option-draft (make-string 201 #\a) #f)))
+    (check-exn exn:domain? (λ () (struct-copy poll-draft draft [options '()])))
+    (check-exn exn:domain? (λ () (struct-copy poll-draft draft [options (make-list 31 (car options))])))
+    (check-exn exn:domain? (λ () (struct-copy poll-draft draft [question ""])))
+    (check-exn exn:domain? (λ () (struct-copy poll-draft draft [slide 0])))
+    (define exclusive (cons (option-draft "Neither" #t) options))
+    (check-exn exn:domain? (λ () (struct-copy poll-draft draft [options exclusive])))
+    (check-true (poll-draft? (struct-copy poll-draft draft [kind "multi"] [options exclusive]))))
+
+  (test-case "untrusted poll fields produce domain failures and text cannot change after parsing"
+    (check-exn exn:domain? (λ () (make-option-draft #f #f)))
+    (check-exn exn:domain? (λ () (make-poll-draft #f #f "single" '() #f #f)))
+    (check-exn exn:domain? (λ () (make-poll-draft #f "Q" "unknown" '() #f #f)))
+    (define raw (string-copy "Answer"))
+    (define answer (option-draft raw #f))
+    (string-fill! raw #\space)
+    (check-equal? (option-draft-label answer) "Answer")
+    (check-true (immutable? (option-draft-label answer)))
+    (define kind (string-copy "single"))
+    (define question (string-copy "Q"))
+    (define draft (make-poll-draft #f question kind (list answer answer) #f #f))
+    (string-fill! kind #\space)
+    (string-fill! question #\space)
+    (check-equal? (poll-draft-kind draft) "single")
+    (check-equal? (poll-draft-question draft) "Q"))
+
+  (test-case "ballot refusal distinguishes choice count from invalid options"
+    (define options (list (option 1 0 "Yes" #f) (option 2 1 "Neither" #t)))
+    (check-equal? (ballot-refusal "single" options '(1 2)) 'single-choice)
+    (for ([ids '(() (1 1) (3) (1 2))])
+      (check-equal? (ballot-refusal "multi" options ids) 'invalid))
+    (check-false (ballot-refusal "multi" options '(2))))
+
   (define b1 (ballots-cast (ballots-cast empty-ballots "a" '(1)) "b" '(1)))
 
   (test-case "ballots-cast: a new voter, a changed vote and a multi-choice vote"

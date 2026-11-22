@@ -6,7 +6,7 @@
 ;;   orquelo user list
 ;; Reads DATABASE_URL and MIGRATIONS_DIR; it migrates first, so it works against a fresh database.
 ;; Without passwords (#:passwords? #f, an edition with another login) just list, suspend and activate work.
-(require racket/contract/base racket/match racket/port racket/string db
+(require racket/contract/base racket/match racket/port racket/string
          "auth/password.rkt" "db/accounts.rkt" "db-cli.rkt" (only-in "config.rkt" core-streams)
          "domain.rkt" "edition.rkt")
 (provide (contract-out
@@ -38,10 +38,6 @@
 ;; the display name for an address without --name: its local part
 (define (default-name email) (car (string-split email "@" #:trim? #f)))
 
-;; Exception -> Boolean
-(define (unique-violation? e)
-  (and (exn:fail:sql? e) (equal? (exn:fail:sql-sqlstate e) "23505")))
-
 ;; ------------------------------------------------------------------ commands
 ;; Connection String -> Id
 ;; the id of the user with this verified email; raises when there is none
@@ -51,16 +47,14 @@
 ;; Connection String String String -> Void
 ;; a new user with a verified email and the password hash, in one transaction
 (define (user-add c email name hash)
-  (call-with-transaction c (λ () (set-password! c (create-user! c email #t name) hash)))
+  (when (eq? (create-password-user! c email name hash) 'email-taken)
+    (raise-user-error "a user with this email already exists"))
   (printf "added ~a\n" email))
 
 ;; Connection String String -> Void
 ;; replaces the password and ends every session of the user
 (define (user-passwd c email hash)
-  (call-with-transaction c (λ ()
-                             (define id (user-id-of c email))
-                             (set-password! c id hash)
-                             (bump-session-epoch! c id)))
+  (replace-password! c (user-id-of c email) hash)
   (printf "password changed for ~a\n" email))
 
 ;; Connection -> Void
@@ -76,8 +70,7 @@
   (define (with-db f) (call-with-migrated-db env streams f) 0)
   (define (refuse) (eprintf (usage passwords?)) 2)
   (parameterize ([current-output-port out])
-    (with-handlers ([unique-violation? (λ (_) (eprintf "a user with this email already exists\n") 1)]
-                    [exn:fail? (λ (e) (eprintf "~a\n" (exn-message e)) 1)])
+    (with-handlers ([exn:fail? (λ (e) (eprintf "~a\n" (exn-message e)) 1)])
       (match (vector->list argv)
         [(list "list") (with-db user-list)]
         [(list (and verb (or "suspend" "activate")) email)

@@ -4,26 +4,9 @@
 (require racket/contract/base racket/list racket/string web-server/dispatch web-server/http
          "../auth/password.rkt" "../auth/session.rkt" "../auth/throttle.rkt" "../auth/users.rkt"
          "../config.rkt" "../db/accounts.rkt" "../domain.rkt" "../edition.rkt"
-         "deps.rkt" "endpoint.rkt" "inputs.rkt" "json.rkt")
+         "client-ip.rkt" "deps.rkt" "endpoint.rkt" "inputs.rkt" "json.rkt")
 (provide (contract-out
-          [make-password-routes (-> throttle? boolean? routes/c)]
-          [client-ip (-> request? boolean? string?)]))
-
-;; Request Boolean -> String
-;; the address the throttle counts failures against: the rightmost X-Forwarded-For entry (the one our
-;; own ingress appended; earlier ones are client-controlled) when behind a trusted proxy, else the peer
-(define (client-ip req trust-proxy?)
-  (define xff (and trust-proxy? (headers-assq* #"X-Forwarded-For" (request-headers/raw req))))
-  (define last-entry
-    (and xff (let ([es (string-split (bytes->string/utf-8 (header-value xff) #\?) ",")])
-               (and (pair? es) (string-trim (last es))))))
-  (if (and last-entry (non-empty-string? last-entry)) last-entry (request-client-ip req)))
-
-;; Real -> Nothing
-;; 429 with Retry-After (whole seconds, rounded up)
-(define (throttled! wait)
-  (raise (exn:throttled "too many attempts, try again later" (current-continuation-marks) (inexact->exact (ceiling wait)))))
-(struct exn:throttled exn:fail (seconds))
+          [make-password-routes (-> throttle? boolean? routes/c)]))
 
 ;; Throttle Boolean -> Routes
 ;; POST /auth/password and PUT /api/me/password; everything else goes to the fallback
@@ -89,20 +72,3 @@
       (signed-in "/api/me/password" (λ (d req me) (or-429 (λ () (change-password d req me)))))]
      [else fallback]))
   dispatch)
-
-;; Natural -> Response
-(define (too-many-requests seconds)
-  (define r (error-response 429 "throttled" "too many attempts, try again later"))
-  (struct-copy response r [headers (cons (header #"Retry-After" (string->bytes/utf-8 (number->string seconds))) (response-headers r))]))
-
-(module+ test
-  (require rackunit racket/promise net/url)
-  (define (req . headers)
-    (make-request #"POST" (string->url "/auth/password") (for/list ([h headers]) (make-header (car h) (cdr h)))
-                  (delay '()) #f "10.0.0.9" 80 "10.0.0.9"))
-  (test-case "client-ip: the peer, or the rightmost X-Forwarded-For entry behind a trusted proxy"
-    (check-equal? (client-ip (req) #f) "10.0.0.9")
-    (check-equal? (client-ip (req (cons #"X-Forwarded-For" #"1.1.1.1, 2.2.2.2")) #f) "10.0.0.9")
-    (check-equal? (client-ip (req (cons #"X-Forwarded-For" #"6.6.6.6, 2.2.2.2")) #t) "2.2.2.2")
-    (check-equal? (client-ip (req (cons #"X-Forwarded-For" #"3.3.3.3")) #t) "3.3.3.3")
-    (check-equal? (client-ip (req) #t) "10.0.0.9")))

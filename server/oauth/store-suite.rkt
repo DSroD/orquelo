@@ -201,6 +201,33 @@
      (thread-wait (thread (λ () (store-grant-touch! st (grant-id keep) 1))))
      (check-equal? (grant-last-used (store-grant-ref st (grant-id keep))) 1))
 
+   (store-case "atomically also undoes everything for a non-exn raise and for an escape" (st)
+     (define keep (a-grant st))
+     (define (mutate!)
+       (store-grant-create! st 8 "c1" '("decks") 1 0)
+       (store-token-put! st (a-token "at" (grant-id keep) 'access))
+       (store-grant-touch! st (grant-id keep) 9))
+     (define (unchanged?)
+       (check-equal? (store-grants-of st 8) '())
+       (check-false (store-access-ref st (h "at") 1))
+       (check-false (grant-last-used (store-grant-ref st (grant-id keep)))))
+     (check-equal? (with-handlers ([symbol? values]) (store-atomically st (λ () (mutate!) (raise 'boom)))) 'boom)
+     (unchanged?)
+     (check-equal? (let/ec k (store-atomically st (λ () (mutate!) (k 'escaped)))) 'escaped)
+     (unchanged?)
+     (store-grant-touch! st (grant-id keep) 1)
+     (check-equal? (grant-last-used (store-grant-ref st (grant-id keep))) 1))
+
+   (store-case "a failed nested atomically undoes only its own operations" (st)
+     (define g (a-grant st))
+     (store-atomically
+      st
+      (λ ()
+        (store-grant-touch! st (grant-id g) 1)
+        (check-exn exn:fail?
+                   (λ () (store-atomically st (λ () (store-grant-touch! st (grant-id g) 2) (error "inner")))))))
+     (check-equal? (grant-last-used (store-grant-ref st (grant-id g))) 1))
+
    (store-case "racing consumers of one code: exactly one wins, the rest see reuse" (st)
      (define g (a-grant st))
      (store-code-put! st (a-code "code" (grant-id g)))

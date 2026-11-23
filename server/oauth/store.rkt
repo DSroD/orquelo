@@ -25,6 +25,8 @@
                                   (or/c grant? reused? #f))]
              [sweep! (-> exact-integer? void?)]
              [atomically (-> (-> any) any)])]
+          [token-less-grant-lifetime exact-nonnegative-integer?]
+          [registered-client-lifetime exact-nonnegative-integer?]
           [make-memory-store (-> oauth-store?)])
          store-client-ref store-client-put! store-pending-put! store-pending-ref store-pending-take!
          store-grant-create! store-grant-ref store-grants-of store-grant-delete! store-grant-touch!
@@ -63,7 +65,9 @@
 ;;                          hold no token and were created over 15 minutes ago (an approval whose code
 ;;                          was never exchanged, or whose exchange failed)
 ;;   atomically             run a thunk so that its store operations happen together or not at all: when
-;;                          the thunk raises (or escapes), everything it did is undone
+;;                          the thunk raises (anything, not only an exn) or escapes, everything it did is
+;;                          undone. Calls nest like savepoints: an inner call that fails undoes only its
+;;                          own operations; the outer one carries on if it handles the failure
 (struct oauth-store (client-ref client-put! pending-put! pending-ref pending-take! grant-create!
                      grant-ref grants-of grant-delete! grant-touch! code-put! code-consume! token-put!
                      access-ref refresh-ref refresh-rotate! sweep! atomically))
@@ -110,22 +114,23 @@
       (hash-clear! t)
       (for ([(k v) (in-hash c)]) (hash-set! t k v))))
 
-  ;; the lock is re-entrant per thread, so an operation may run inside `atomically`; only the
-  ;; outermost call keeps a snapshot, to undo everything if the thunk does not return
+  ;; (-> A) -> A
+  ;; runs the thunk, restoring the tables as they were unless it returns
+  (define (rolling-back thunk)
+    (define saved (snapshot))
+    (define done? #f)
+    (dynamic-wind void (λ () (begin0 (thunk) (set! done? #t))) (λ () (unless done? (restore! saved)))))
+
+  ;; the lock is re-entrant per thread, so an operation may run inside `atomically`; a nested call
+  ;; keeps its own snapshot, like a savepoint
   (define (atomically thunk)
-    (cond [(thread-cell-ref holder) (thunk)]
+    (cond [(thread-cell-ref holder) (rolling-back thunk)]
           [else
            (semaphore-wait lock)
            (thread-cell-set! holder #t)
-           (define saved (snapshot))
-           (define done? #f)
-           (dynamic-wind
-            void
-            (λ () (begin0 (thunk) (set! done? #t)))
-            (λ ()
-              (unless done? (restore! saved))
-              (thread-cell-set! holder #f)
-              (semaphore-post lock)))]))
+           (dynamic-wind void
+                         (λ () (rolling-back thunk))
+                         (λ () (thread-cell-set! holder #f) (semaphore-post lock)))]))
   (define-syntax-rule (locked body ...) (atomically (λ () body ...)))
 
   (define (expired? expires now) (<= expires now))

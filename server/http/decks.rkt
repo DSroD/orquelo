@@ -196,12 +196,11 @@
   (archive-response d me id #f))
 
 ;; ------------------------------------------------------------------ polls
-;; the poll body is parsed and validated by jsexpr->poll-draft inside the op
 (define-endpoint (create-poll* d req me pid)
-  (json-response (poll->jsexpr (op-create-poll d me pid (request-json req))) #:status 201))
+  (json-response (poll->jsexpr (op-create-poll d me pid (jsexpr->poll-draft (request-json req)))) #:status 201))
 
 (define-endpoint (update-poll* d req me id)
-  (json-response (poll->jsexpr (op-replace-poll d me id (request-json req)))))
+  (json-response (poll->jsexpr (op-replace-poll d me id (jsexpr->poll-draft (request-json req))))))
 
 ;; the display setting stays editable after runs, unlike the poll's content
 (define-endpoint (patch-poll* d req me id)

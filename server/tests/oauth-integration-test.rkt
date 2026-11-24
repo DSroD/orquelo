@@ -3,7 +3,7 @@
 ;; Postgres (TEST_DATABASE_URL), the client metadata document served by a stub fetch.
 (require rackunit racket/list racket/string racket/file json net/uri-codec net/url
          db "support.rkt" "../config.rkt" "../db/conn.rkt" "../main.rkt" "../edition.rkt" "../editions/core.rkt"
-         "../oauth/data.rkt" "../db/accounts.rkt" "http-client.rkt")
+         "../oauth/data.rkt" "../db/accounts.rkt" "http-client.rkt" "oauth-client.rkt")
 
 ;; ------------------------------------------------------------------ the stage
 (define static-dir (make-temporary-file "orquelo-oauth-static~a" 'directory))
@@ -12,8 +12,6 @@
 
 (define client-id "https://agent.example/client.json")
 (define redirect "https://agent.example/cb")
-(define verifier "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk")
-(define challenge "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM")
 
 ;; String -> Fetched
 ;; the metadata document of the one client the tests know; everything else is not found
@@ -40,47 +38,8 @@
 (define (start suffix) (or (try-start suffix) (try-start suffix) (try-start suffix) (error "could not start server")))
 
 ;; ------------------------------------------------------------------ helpers
+(current-oauth-client (oauth-client client-id redirect))
 (define (code-of r) (hash-ref (resp-json r) 'error))
-(define (query-of url) (for/hash ([kv (in-list (url-query (string->url url)))]) (values (car kv) (cdr kv))))
-
-;; (Listof (Pair Symbol String)) -> String
-(define (authorize-path . extra)
-  (string-append "/oauth/authorize?"
-                 (alist->form-urlencoded
-                  (append (list (cons 'response_type "code") (cons 'client_id client-id) (cons 'redirect_uri redirect)
-                                (cons 'code_challenge challenge) (cons 'code_challenge_method "S256") (cons 'state "xyz"))
-                          extra))))
-
-;; Resp -> String
-;; the pending id a successful authorize redirects to
-(define (pending-id r)
-  (check-equal? (resp-status r) 302)
-  (cadr (regexp-match #px"^/connect/([A-Za-z0-9_-]{43})$" (resp-header r "Location"))))
-
-;; String -> String
-(define (authorize! . extra) (pending-id (http "GET" (apply authorize-path extra))))
-
-(define (approve path cookie scopes #:origin [origin (current-base)])
-  (http "POST" (format "/api/oauth/requests/~a/approve" path) #:json (hasheq 'scopes scopes) #:cookies (list cookie) #:origin origin))
-(define (deny path cookie) (http "POST" (format "/api/oauth/requests/~a/deny" path) #:json (hasheq) #:cookies (list cookie)))
-
-;; String String -> Resp
-(define (token-request code the-verifier #:client [cid client-id] #:redirect [redirect-uri redirect])
-  (http "POST" "/oauth/token"
-        #:form (list (cons 'grant_type "authorization_code") (cons 'code code) (cons 'client_id cid)
-                     (cons 'redirect_uri redirect-uri) (cons 'code_verifier the-verifier))))
-
-;; String -> Resp
-(define (refresh-request token)
-  (http "POST" "/oauth/token"
-        #:form (list (cons 'grant_type "refresh_token") (cons 'refresh_token token) (cons 'client_id client-id))))
-
-;; String Cookie -> String
-;; the authorization code of an approved request
-(define (approved-code id cookie)
-  (define r (approve id cookie '("decks" "results")))
-  (check-equal? (resp-status r) 200)
-  (hash-ref (query-of (hash-ref (resp-json r) 'redirect_to)) 'code))
 
 ;; ------------------------------------------------------------------ tests
 (module+ test
@@ -103,7 +62,8 @@
   (test-case "OAuth is off when PUBLIC_BASE_URL has a path"
     (for ([p '("/.well-known/oauth-authorization-server" "/.well-known/oauth-protected-resource" "/oauth/authorize" "/oauth/register")])
       (check-equal? (resp-status (http "GET" p)) 404 p))
-    (check-equal? (resp-status (http "POST" "/oauth/token" #:form '((grant_type . "x")))) 404)))
+    (check-equal? (resp-status (http "POST" "/oauth/token" #:form '((grant_type . "x")))) 404)
+    (check-equal? (code-of (http "POST" "/mcp" #:json (hasheq))) "not_found")))
 
 (define (run-tests db)
   (define cookie (begin (ensure-password-user! db "oauth@example.org") (login-cookie! "oauth@example.org")))
@@ -284,9 +244,8 @@
     (check-equal? (resp-header r "Referrer-Policy") "no-referrer")
     (check-false (resp-header (http "GET" "/login") "Content-Security-Policy")))
 
-  (test-case "unknown OAuth and MCP paths are JSON 404s, not the SPA"
-    (check-equal? (resp-status (http "GET" "/oauth/nope")) 404)
-    (check-equal? (code-of (http "GET" "/mcp")) "not_found"))
+  (test-case "an unknown OAuth path is a JSON 404, not the SPA"
+    (check-equal? (code-of (http "GET" "/oauth/nope")) "not_found"))
 
   (test-case "bursts are answered with 429 and Retry-After"
     (define (burst path thunk)

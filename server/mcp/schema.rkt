@@ -8,6 +8,8 @@
           [string-type (-> exact-nonnegative-integer? exact-nonnegative-integer? field-type?)]
           [optional-string-type (-> exact-nonnegative-integer? exact-nonnegative-integer? string? field-type?)]
           [integer-type (-> exact-integer? exact-integer? field-type?)]
+          [optional-integer-type (-> exact-integer? exact-integer? exact-integer? field-type?)]
+          [optional-type (-> field-type? field-type?)]
           [boolean-type (-> field-type?)]
           [optional-boolean-type (-> boolean? field-type?)]
           [one-of-type (->* () #:rest (non-empty-listof string?) field-type?)]
@@ -50,9 +52,13 @@
           [(ok? v) (convert v)]
           [else (invalid! path (string-append "must be " expected))])))
 
+;; Any -> Boolean
+;; an optional field may be left out or given as JSON null
+(define (unset? v) (or (eq? v absent) (eq? v 'null)))
+
 ;; (Any (or String #f) -> X) X -> (Any (or String #f) -> X)
 (define (defaulting parse default)
-  (λ (v path) (if (eq? v absent) default (parse v path))))
+  (λ (v path) (if (unset? v) default (parse v path))))
 
 ;; Natural Natural -> FieldType
 (define (string-type lo hi)
@@ -62,8 +68,16 @@
                                values)
               #t))
 
+;; FieldType -> FieldType
+;; the type, but the field may be left out or null, and then reads as #f; the schema has no default
+(define (optional-type t)
+  (field-type (field-type-schema t)
+              (λ (v path) (if (unset? v) #f ((field-type-parse t) v path)))
+              #f))
+
 ;; Natural Natural String -> FieldType
 (define (optional-string-type lo hi default)
+  (unless (<= lo (string-length default) hi) (raise-argument-error 'optional-string-type "a default within the bounds" default))
   (define t (string-type lo hi))
   (field-type (hash-set (field-type-schema t) 'default default)
               (defaulting (field-type-parse t) default)
@@ -76,6 +90,14 @@
                                (format "an integer from ~a to ~a" lo hi)
                                values)
               #t))
+
+;; Integer Integer Integer -> FieldType
+(define (optional-integer-type lo hi default)
+  (unless (<= lo default hi) (raise-argument-error 'optional-integer-type "a default within the bounds" default))
+  (define t (integer-type lo hi))
+  (field-type (hash-set (field-type-schema t) 'default default)
+              (defaulting (field-type-parse t) default)
+              #f))
 
 ;; -> FieldType
 (define (boolean-type)
@@ -189,6 +211,24 @@
                                       (list 'tag (optional-string-type 0 3 "x")))))
     (check-equal? (parse-arguments t (hasheq 'n 2 'note 'null)) '(2 #f "x"))
     (check-equal? (parse-arguments t (hasheq 'n 2 'note "ab" 'tag "t")) '(2 "ab" "t"))
+    (define opt (object-type list (list (list 'n (optional-integer-type 0 5 0)))))
+    (check-equal? (parse-arguments opt (hasheq)) '(0))
+    (check-equal? (parse-arguments opt (hasheq 'n 3)) '(3))
+    (check-equal? (parse-arguments opt (hasheq 'n 'null)) '(0) "null reads as absent")
+    (check-exn exn:fail:contract? (λ () (optional-integer-type 1 5 9)))
+    (check-exn exn:fail:contract? (λ () (optional-string-type 1 2 "")))
+    (define maybe (object-type list (list (list 'n (optional-type (integer-type 1 5))))))
+    (check-equal? (parse-arguments maybe (hasheq)) '(#f))
+    (check-equal? (parse-arguments maybe (hasheq 'n 'null)) '(#f))
+    (check-equal? (parse-arguments maybe (hasheq 'n 2)) '(2))
+    (check-exn #rx"integer" (λ () (parse-arguments maybe (hasheq 'n 9))))
+    (check-equal? (field-type-schema maybe)
+                  (hasheq 'type "object" 'additionalProperties #f
+                          'properties (hasheq 'n (hasheq 'type "integer" 'minimum 1 'maximum 5))))
+    (check-exn #rx"integer" (λ () (parse-arguments opt (hasheq 'n 9))))
+    (check-equal? (field-type-schema (object-type list (list (list 'n (optional-integer-type 0 5 0)))))
+                  (hasheq 'type "object" 'additionalProperties #f
+                          'properties (hasheq 'n (hasheq 'type "integer" 'minimum 0 'maximum 5 'default 0))))
     (check-exn #rx"integer" (λ () (parse-arguments t (hasheq 'n 6 'note 'null))))
     (check-exn #rx"integer" (λ () (parse-arguments t (hasheq 'n 1.5 'note 'null))))
     (check-exn #rx"required" (λ () (parse-arguments t (hasheq 'n 1))))

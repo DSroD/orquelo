@@ -16,6 +16,7 @@
           [body-bool-or-default (-> hash? symbol? boolean? boolean?)]
           [body-slide (-> hash? symbol? natural-number/c natural-number/c)]
           [body-slide-or-null (-> hash? symbol? natural-number/c (or/c natural-number/c #f))]
+          [check-slide (-> any/c symbol? natural-number/c (or/c natural-number/c #f))]
           [body-strings (-> hash? symbol? natural-number/c natural-number/c natural-number/c natural-number/c
                             (listof string?))]
           [body-distinct-ints (-> hash? symbol? (listof id/c))]
@@ -110,8 +111,13 @@
 
 ;; JSObject Symbol Natural -> (or Natural #f)
 ;; a slide number within 1..page-count; null or absent is #f
-(define (body-slide-or-null h key page-count)
-  (match (hash-ref h key 'null)
+(define (body-slide-or-null h key page-count) (check-slide (hash-ref h key 'null) key page-count))
+
+;; Any Symbol Natural -> (or Natural #f)
+;; the slide number if it is within 1..page-count, #f for 'null, else 422 naming `key`; shared by
+;; every front end that takes a slide
+(define (check-slide v key page-count)
+  (match v
     ['null #f]
     [(? exact-integer? n) #:when (<= 1 n page-count) n]
     [_ (invalid! key (format "~a must be null or between 1 and ~a" key page-count))]))

@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import type { Browser, BrowserContext } from "@playwright/test";
 import { newEmail } from "./admin";
 import type { Edition } from "./edition";
+import { McpClient } from "./mcp-client";
 import { Presenter } from "./presenter";
 import { Projector } from "./screen";
 import { PHONE, Student } from "./student";
@@ -45,6 +46,9 @@ export class Cast {
     if (url) await student.joins(url);
     return student;
   }
+
+  // an agent that connects to Orquelo over OAuth and MCP
+  mcpClient = (name = "Claude Agent"): McpClient => new McpClient(name, this.baseURL);
 
   close = () => Promise.all(this.contexts.map((c) => c.close()));
 }

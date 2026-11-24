@@ -7,6 +7,7 @@ export type { Locator, Page } from "@playwright/test";
 export { admin, newEmail } from "./admin";
 export { type Accounts, type Edition, type Login } from "./edition";
 export { Cast } from "./cast";
+export { McpClient, type Callback } from "./mcp-client";
 export { Presenter } from "./presenter";
 export { Projector } from "./screen";
 export { Student } from "./student";

@@ -2,14 +2,14 @@
 ;; Deck and poll operations shared by the REST handlers and other front ends (MCP tools).
 ;; Each does its own lookup and access check, mutates, and returns domain structs, or raises
 ;; exn:api (404/403/409/422). make-poll-draft may also raise exn:domain; callers map it.
-;; Callers may validate the body before calling an op (no leak: validation never inspects the resource).
+;; Callers may validate before calling an op (no leak: validation never inspects the resource).
 (require racket/contract/base racket/match
          "../db/qa.rkt" "../db/repo.rkt" "../domain.rkt"
          "deps.rkt" "json.rkt" "lookup.rkt" "validate.rkt")
 (provide (contract-out
-          [jsexpr->poll-draft (-> hash? natural-number/c poll-draft?)]
-          [op-create-poll (-> deps? user? id/c hash? poll?)]
-          [op-replace-poll (-> deps? user? id/c hash? poll?)]
+          [jsexpr->poll-draft (-> hash? poll-draft?)]
+          [op-create-poll (-> deps? user? id/c poll-draft? poll?)]
+          [op-replace-poll (-> deps? user? id/c poll-draft? poll?)]
           [op-set-show-results (-> deps? user? id/c boolean? poll?)]
           [op-delete-poll (-> deps? user? id/c void?)]
           [op-duplicate-poll (-> deps? user? id/c poll?)]
@@ -20,12 +20,18 @@
 ;; -> Nothing
 (define (poll-has-runs!) (api-error! 409 "poll_has_runs" "poll has runs; duplicate it to edit"))
 
-;; JSObject Natural -> PollDraft
-;; the poll in a request body, shared by create and replace; 422 naming the first bad field
-(define (jsexpr->poll-draft h page-count)
-  (make-poll-draft (body-slide-or-null h 'slide page-count) (hash-ref h 'question #f)
+;; JSObject -> PollDraft
+;; the poll in a request body, shared by create and replace. Content rules are the PollDraft guard's
+;; (exn:domain); the slide's range needs the deck, so the ops check it (check-draft-slide!)
+(define (jsexpr->poll-draft h)
+  (make-poll-draft (match (hash-ref h 'slide 'null) ['null #f] [v v]) (hash-ref h 'question #f)
                    (hash-ref h 'kind #f) (jsexpr->option-drafts h)
                    (body-bool-or-default h 'show_results #f) (body-bool-or-default h 'allow_additional_answers #f)))
+
+;; PollDraft Natural -> Void
+;; 422 naming `slide` unless the draft's slide is none or within the deck's 1..page-count
+(define (check-draft-slide! draft page-count)
+  (void (check-slide (or (poll-draft-slide draft) 'null) 'slide page-count)))
 
 ;; JSObject -> [Listof OptionDraft]
 ;; parses option objects into trusted answer definitions
@@ -36,19 +42,19 @@
     (unless (hash? o) (invalid! 'options "each option must be an object"))
     (make-option-draft (hash-ref o 'label #f) (body-bool-or-default o 'exclusive #f))))
 
-;; Deps User Id JSObject -> Poll
-;; adds the poll described by `body` to the deck
-(define (op-create-poll d me pid body)
+;; Deps User Id PollDraft -> Poll
+;; adds the poll to the deck; 422 when its slide is beyond the deck's pages
+(define (op-create-poll d me pid draft)
   (define dk (need-deck d me pid 'edit))
-  (define draft (jsexpr->poll-draft body (presentation-page-count (deck-presentation dk))))
+  (check-draft-slide! draft (presentation-page-count (deck-presentation dk)))
   (create-poll! (deps-db d) pid draft))
 
-;; Deps User Id JSObject -> Poll
+;; Deps User Id PollDraft -> Poll
 ;; replaces the content of poll `id`; 409 once it has runs
-(define (op-replace-poll d me id body)
+(define (op-replace-poll d me id draft)
   (define existing (need-user-poll d me id 'edit))
   (define p (need-presentation-of d existing))
-  (define draft (jsexpr->poll-draft body (presentation-page-count p)))
+  (check-draft-slide! draft (presentation-page-count p))
   (match (update-poll! (deps-db d) id draft)
     [#f (not-found! "poll not found")]
     ['has-runs (poll-has-runs!)]
@@ -95,12 +101,18 @@
   (define ok (hasheq 'slide 2 'question "Q?" 'kind "single" 'show_results #t
                      'options (list (hasheq 'label "a") (hasheq 'label "b" 'exclusive #f))))
   (test-case "a poll body becomes a trusted draft"
-    (define draft (jsexpr->poll-draft ok 3))
+    (define draft (jsexpr->poll-draft ok))
     (check-equal? (poll-draft-slide draft) 2)
+    (check-false (poll-draft-slide (jsexpr->poll-draft (hash-remove ok 'slide))))
     (check-equal? (map option-draft-label (poll-draft-options draft)) '("a" "b"))
     (check-true (poll-draft-show-results? draft)))
   (test-case "bad poll bodies name the field"
-    (check-equal? (field-of (λ () (jsexpr->poll-draft (hash-remove ok 'options) 3))) "options")
-    (check-equal? (field-of (λ () (jsexpr->poll-draft (hash-set ok 'options '("a" "b")) 3))) "options")
-    (check-equal? (field-of (λ () (jsexpr->poll-draft (hash-set ok 'slide 9) 3))) "slide")
-    (check-exn exn:domain? (λ () (jsexpr->poll-draft (hash-set ok 'kind "bogus") 3)))))
+    (check-equal? (field-of (λ () (jsexpr->poll-draft (hash-remove ok 'options)))) "options")
+    (check-equal? (field-of (λ () (jsexpr->poll-draft (hash-set ok 'options '("a" "b"))))) "options")
+    (check-exn exn:domain? (λ () (jsexpr->poll-draft (hash-set ok 'kind "bogus"))))
+    (check-exn exn:domain? (λ () (jsexpr->poll-draft (hash-set ok 'slide "x")))))
+  (test-case "the slide must be within the deck's pages"
+    (define draft (jsexpr->poll-draft ok))
+    (check-false (field-of (λ () (check-draft-slide! draft 3))))
+    (check-equal? (field-of (λ () (check-draft-slide! draft 1))) "slide")
+    (check-false (field-of (λ () (check-draft-slide! (jsexpr->poll-draft (hash-remove ok 'slide)) 1))))))

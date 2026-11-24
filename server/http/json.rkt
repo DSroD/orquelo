@@ -10,6 +10,7 @@
           [json-response (->* (jsexpr?) (#:status natural-number/c #:headers (listof header?)) response?)]
           [no-content (->* () (#:headers (listof header?)) response?)]
           [error-response (->* (natural-number/c string? string?) ((or/c string? #f)) response?)]
+          [busy-response (-> response?)]
           [request-json (-> request? hash?)]
           [query-param (-> request? symbol? (or/c string? #f))]
           [me->jsexpr (-> user? limits? natural-number/c jsexpr?)]
@@ -73,6 +74,12 @@
 (define (error-response status code message [field #f])
   (json-response (let ([h (hasheq 'error code 'message message)]) (if field (hash-set h 'field field) h))
                  #:status status))
+
+;; -> Response
+;; 503: the database pool stayed full; the client should retry shortly
+(define (busy-response)
+  (define r (error-response 503 "busy" "the server is busy, try again"))
+  (struct-copy response r [headers (cons (header #"Retry-After" #"1") (response-headers r))]))
 
 ;; Request -> JSObject
 ;; the JSON object in the request body, or 400

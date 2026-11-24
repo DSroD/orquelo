@@ -11,7 +11,7 @@
                                      #:observe-wait (-> real? any)
                                      #:on-timeout (-> any))
                           connection?)]
-          [exn:fail:pool-timeout? (-> any/c boolean?)]))
+          [struct (exn:fail:pool-timeout exn:fail) ([message string?] [continuation-marks continuation-mark-set?])]))
 
 ;; An exn:fail:pool-timeout is raised when no pooled connection became free within the wait.
 (struct exn:fail:pool-timeout exn:fail ())

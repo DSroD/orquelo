@@ -14,8 +14,9 @@
 ;;
 ;; Options come in any order, before or after #:args, and the body is last. `ctx` is whatever the app
 ;; passes to the server on each call. A field `show-results` reads the key "show_results"; two fields
-;; whose keys collide (a-b, a_b) are an error. Types: (string lo hi) (optional-string lo hi d)
-;; (integer lo hi) (boolean) (optional-boolean d) (one-of s ...) (array T lo hi) (nullable T)
+;; whose keys collide (a-b, a_b) are an error. An optional field may be left out or null; `(optional T)` then reads
+;; as #f, the others as their default, which must lie within the bounds (checked when defined). Types: (string lo hi) (optional-string lo hi d)
+;; (integer lo hi) (optional-integer lo hi d) (optional T) (boolean) (optional-boolean d) (one-of s ...) (array T lo hi) (nullable T)
 ;; (object ctor [field T] ...). The input schema is generated from the same spec that parses the
 ;; arguments. A malformed spec is a compile-time error. Tool names are 1-128 characters of A-Za-z0-9_-.
 ;; (the identifier's `-` becomes `_`). A body that returns something else than a JSON object or a
@@ -92,6 +93,14 @@
                 #:when (let ([k (tool-name-of id)]) (begin0 (hash-ref seen k #f) (hash-set! seen k #t))))
       id))
 
+;; Syntax Syntax Syntax (Any -> (or Real #f)) -> (or Syntax #f)
+  ;; the default when its measure (a number, or #f when it is not literal) is outside literal bounds
+  (define (default-outside lo hi d measure)
+    (define l (syntax-e lo))
+    (define h (syntax-e hi))
+    (define m (measure (syntax-e d)))
+    (and (real? l) (real? h) m (not (<= l m h)) d))
+
   ;; Syntax Syntax -> (or Syntax #f)
   ;; lo when both bounds are literal numbers and lo exceeds hi
   (define (reversed-range lo hi)
@@ -100,17 +109,23 @@
     (and (real? l) (real? h) (> l h) lo))
 
   (define-syntax-class field-spec
-    #:description "field type (string, optional-string, integer, boolean, optional-boolean, one-of, array, nullable or object)"
+    #:description "field type (string, optional-string, integer, optional-integer, optional, boolean, optional-boolean, one-of, array, nullable or object)"
     #:attributes (expr)
     (pattern ((~datum string) lo:expr hi:expr)
              #:fail-when (reversed-range #'lo #'hi) "lower bound exceeds upper bound"
              #:with expr #'(string-type lo hi))
     (pattern ((~datum optional-string) lo:expr hi:expr d:expr)
              #:fail-when (reversed-range #'lo #'hi) "lower bound exceeds upper bound"
+             #:fail-when (default-outside #'lo #'hi #'d (λ (v) (and (string? v) (string-length v)))) "default outside the bounds"
              #:with expr #'(optional-string-type lo hi d))
     (pattern ((~datum integer) lo:expr hi:expr)
              #:fail-when (reversed-range #'lo #'hi) "lower bound exceeds upper bound"
              #:with expr #'(integer-type lo hi))
+    (pattern ((~datum optional-integer) lo:expr hi:expr d:expr)
+             #:fail-when (reversed-range #'lo #'hi) "lower bound exceeds upper bound"
+             #:fail-when (default-outside #'lo #'hi #'d (λ (v) (and (real? v) v))) "default outside the bounds"
+             #:with expr #'(optional-integer-type lo hi d))
+    (pattern ((~datum optional) t:field-spec) #:with expr #'(optional-type t.expr))
     (pattern ((~datum boolean)) #:with expr #'(boolean-type))
     (pattern ((~datum optional-boolean) d:expr) #:with expr #'(optional-boolean-type d))
     (pattern ((~datum one-of) s:str ...+) #:with expr #'(one-of-type s ...))
@@ -168,6 +183,7 @@
   (require rackunit syntax/macro-testing)
   (struct new-option (label) #:transparent)
   (struct new-poll (question kind options) #:transparent)
+  (struct c (a b) #:transparent)
 
   (define-tool (create-poll ctx)
     #:title "Create a poll"
@@ -239,6 +255,12 @@
     (expansion-error #rx"duplicate field"
                      (define-tool (t ctx) #:description "d"
                        #:args [in (c [a (object d [x-y (boolean)] [x_y (boolean)])])] in))
+    (expansion-error #rx"default outside"
+                     (define-tool (t ctx) #:description "d" #:args [in (c [a (optional-integer 1 5 9)])] in))
+    (expansion-error #rx"default outside"
+                     (define-tool (t ctx) #:description "d" #:args [in (c [a (optional-string 1 2 "")])] in))
+    (expansion-error #rx"field type"
+                     (define-tool (t ctx) #:description "d" #:args [in (c [a (optional (bogus))])] in))
     (expansion-error #rx"lower bound exceeds"
                      (define-tool (t ctx) #:description "d" #:args [in (c [a (string 5 1)])] in))
     (expansion-error #rx"lower bound exceeds"
@@ -260,6 +282,12 @@
                        #:description "d" (hasheq)))
     (expansion-error #rx"expected"
                      (define-tool (t ctx) #:description "d")))
+  (test-case "optional fields: null reads as absent; (optional T) reads #f"
+    (define-tool (opt ctx) #:description "d"
+      #:args [in (c [a (optional (integer 1 5))] [b (optional-integer 1 5 2)])] (hasheq 'v (format "~a" in)))
+    (check-equal? (hash-ref (tool-result-content ((tool-handler opt) 'me (hasheq 'a 'null 'b 'null))) 'v) "#(struct:c #f 2)")
+    (check-false (hash-has-key? (hash-ref (hash-ref (tool-input-schema opt) 'properties) 'a) 'default))
+    (check-equal? (hash-ref (tool-input-schema opt) 'additionalProperties) #f))
   (test-case "dots and digits are valid in tool names"
     (check-equal? (tool-name (let () (define-tool (get-deck.v2 ctx) #:description "d" (hasheq)) get-deck.v2))
                   "get_deck.v2")))

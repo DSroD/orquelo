@@ -3,7 +3,7 @@
 (require racket/contract/base racket/string net/url db/base web-server/http web-server/dispatch
          "../config.rkt" "../auth/session.rkt" "../auth/users.rkt" "../db/accounts.rkt" "../db/conn.rkt" "../domain.rkt" "../edition.rkt"
          "../oauth/cimd.rkt" "../oauth/data.rkt"
-         "decks.rkt" "deps.rkt" "instrument.rkt" "json.rkt" "oauth-routes.rkt" "public.rkt" "static.rkt")
+         "decks.rkt" "deps.rkt" "instrument.rkt" "json.rkt" "mcp-routes.rkt" "oauth-routes.rkt" "public.rkt" "static.rkt")
 (provide (contract-out
           [make-handler (->* (deps? plugin?) (#:oauth-fetch (-> string? fetched?)) (-> request? response?))]
           [make-route-kit (-> deps? route-kit?)]
@@ -54,12 +54,6 @@
 ;; 404 for integer path arguments that are negative or beyond bigint
 (define (check-ids! args)
   (for ([a args]) (when (and (integer? a) (or (< a 0) (> a max-id))) (api-error! 404 "not_found" "not found"))))
-
-;; -> Response
-;; 503: the database pool stayed full; the client should retry shortly
-(define (busy-response)
-  (define r (error-response 503 "busy" "the server is busy, try again"))
-  (struct-copy response r [headers (cons (header #"Retry-After" #"1") (response-headers r))]))
 
 ;; Connection Handler -> Handler
 ;; maps API errors to JSON responses, a full pool to a 503 and anything else to a logged 500.
@@ -136,11 +130,13 @@
   (define dispatch-plugin ((plugin-routes p) kit fallback))
   (define oauth-routes (make-oauth-routes d oauth-fetch))
   (define dispatch-rest (if oauth-routes ((oauth-routes-routes oauth-routes) kit dispatch-plugin) dispatch-plugin))
+  (define mcp (and oauth-routes (make-mcp-handler d oauth-routes)))
   (define-values (dispatch _url)
     (dispatch-rules
      [("healthz") #:method "get" (named "/healthz" (λ (req) (text-response 200 "ok")))]
      [("api" "me") #:method "get" (named "/api/me" me)]
      [("auth" "logout") #:method "post" (named "/auth/logout" logout)]
+     [("mcp") #:method _ (named "/mcp" (or mcp fallback))]
      ;; public
      [("api" "s" "cookies") #:method "get" (public "/api/s/cookies" get-participant-choice)]
      [("api" "s" "cookies") #:method "post"

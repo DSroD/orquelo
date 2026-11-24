@@ -19,12 +19,20 @@ quality and idiom matter as much as behaviour.
   local-disk and an S3 backend chosen by `STORAGE=local|s3`
 - `server/s3/`: a generic S3 client (SigV4, TLS-verified HTTP/1.1) with no orquelo-specific
   code, so it can be published on its own
+- `server/http-client/`: a generic HTTP/1.1 client (TLS-verified, optional peer-address check), used by S3 and
+  the OAuth metadata fetch
+- `server/mcp/`: a generic MCP server library (JSON-RPC, `define-tool`, stateless Streamable HTTP handler). The
+  Orquelo tools are in `server/http/mcp-tools.rkt`; see `docs/mcp.md`
+- `server/oauth/`: a generic OAuth 2.1 authorization server (PKCE, CIMD, DCR, opaque tokens) over a pluggable
+  store. Orquelo's Postgres store is `server/db/oauth-store.rkt`, its routes `server/http/oauth-routes.rkt`.
+  Neither library imports Orquelo code
 - `web/`: Svelte 5 + Vite SPA. `web/src/lib/types.ts` mirrors the API contract
 - `e2e/`: Playwright user stories (`stories/*.spec.ts`) over helpers in `e2e/support` (actors: `Presenter`,
   `Projector`, `Student`). Specs import `test`/`expect` only from `../support`
 - `docs/api.md` + `docs/api-fixtures/`: **the API contract and source of truth**.
   The backend's JSON must equal the fixtures, and the frontend tests parse them
 - `docs/accounts.md`: password accounts (`user` CLI, throttling, sessions)
+- `docs/mcp.md`: the MCP endpoint for AI agents, its OAuth flow and tools
 - `LICENSE` (AGPL-3.0-only), `CLA.md` (contributors agree with "I agree to CLA.md" in the PR) and `CONTRIBUTING.md`
 - `compose.yaml`: self-hosting with Postgres on the published image; `CODE_OF_CONDUCT.md`, `SECURITY.md`
 - `.github/workflows/`: `verify.yml` (flake check, migration lint) and `publish.yml` (`vX.Y.Z` tag on main: amd64 + arm64

@@ -5,7 +5,7 @@ import type { Login } from "./edition";
 // through the Edition seam (edition.ts); the actors call nothing else.
 export const passwordLogin: Login = {
   async submit(page: Page, email: string, password: string): Promise<void> {
-    await page.goto("/login");
+    if (!new URL(page.url()).pathname.startsWith("/login")) await page.goto("/login"); // a redirect already brought us here, keeping return_to
     await page.getByLabel("Email").fill(email);
     await page.getByLabel("Password").fill(password);
     await page.getByRole("button", { name: "Log in" }).click();

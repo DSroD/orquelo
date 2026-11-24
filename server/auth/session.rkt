@@ -16,8 +16,7 @@
           [remembered-participant (-> request? config? (or/c string? #f))]
           [participant-cookie-choice (-> request? config? (or/c boolean? 'null))]
           [participant-choice-cookie (-> request? config? boolean? header?)]
-          [legacy-participant-headers (-> request? (listof header?))]
-          [safe-return-to (-> any/c string?)]))
+          [legacy-participant-headers (-> request? (listof header?))]))
 
 (define user-cookie-name "orquelo_user")
 (define participant-cookie-name "orquelo_participant")
@@ -119,16 +118,6 @@
 (define (legacy-participant-headers req)
   (if (cookie-value req legacy-cookie-name) (list (clear-cookie-header* legacy-cookie-name)) '()))
 
-;; ------------------------------------------------------------------ login helpers
-;; Any -> String
-;; a same-site path to return to after login, else /decks
-(define (safe-return-to s)
-  ;; a whitelist: browsers strip tabs and newlines and read backslashes as slashes, so "/\t/evil.com"
-  ;; or "/\\evil.com" would become protocol-relative. "//" alone matches the pattern, so it is excluded.
-  (if (and (string? s) (regexp-match? #px"^/[A-Za-z0-9/_-]*$" s) (not (string-prefix? s "//")))
-      s
-      "/decks"))
-
 (module+ test
   (require rackunit)
   (define (cfg #:base [base "http://localhost:8080"])
@@ -183,13 +172,4 @@
     (check-equal? (remembered-participant (updated opted-in #t) c) id)
     (define opted-out (updated opted-in #f))
     (check-false (participant-cookie-choice opted-out c))
-    (check-false (remembered-participant opted-out c)))
-  (test-case "return_to sanitising"
-    (check-equal? (safe-return-to "/decks/3") "/decks/3")
-    (check-equal? (safe-return-to "//evil.com") "/decks")
-    (check-equal? (safe-return-to "https://evil.com") "/decks")
-    (check-equal? (safe-return-to "/\\evil") "/decks")
-    (check-equal? (safe-return-to #f) "/decks")
-    (for ([bad '("/\t/evil.com" "/\r/evil.com" "/\n/evil.com" "/evil\n" "/\\evil.com" "//" "//evil.com"
-                 "/%09/evil.com" "%2F%2Fevil.com" "/%2F%2Fevil.com" "/a.b" "")])
-      (check-equal? (safe-return-to bad) "/decks" bad))))
+    (check-false (remembered-participant opted-out c))))

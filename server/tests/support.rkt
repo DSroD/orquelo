@@ -2,7 +2,7 @@
 ;; Shared helpers for integration tests (need TEST_DATABASE_URL, see scripts/with-ephemeral-pg).
 (require racket/runtime-path racket/list racket/promise racket/string db "../auth/password.rkt" "../db/accounts.rkt" "../db/conn.rkt"
          "../db/migrate.rkt" "../db/repo.rkt" "../domain.rkt" "http-client.rkt")
-(provide test-db-url migrations-dir test-sources fresh-db! new-owner! new-deck!
+(provide test-db-url migrations-dir test-sources fresh-db! new-owner! new-deck! reset-oauth-users!
          test-password ensure-password-user! login-cookie!)
 
 (define-runtime-path migrations-dir "../migrations")
@@ -21,6 +21,16 @@
   (query-exec c "CREATE SCHEMA public")
   (migrate! c sources)
   c)
+
+;; Connection [(listof Natural)] -> Void
+;; empties the OAuth tables and the users, then creates users with exactly these ids (the subjects
+;; the OAuth tests grant to)
+(define (reset-oauth-users! c [ids '(7 8)])
+  (query-exec c "DELETE FROM oauth_clients")
+  (query-exec c "DELETE FROM oauth_pending")
+  (query-exec c "DELETE FROM users")
+  (for ([id (in-list ids)])
+    (query-exec c "INSERT INTO users (id) OVERRIDING SYSTEM VALUE VALUES ($1)" id)))
 
 ;; Connection -> Id
 ;; a new user with a verified, unique email, to own decks in tests

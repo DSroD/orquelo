@@ -10,7 +10,7 @@
 ;;   exn:fail:s3:timeout   connecting or waiting for data took too long
 ;; An invalid bucket, endpoint or key is a programming error and raises exn:fail:contract.
 (require racket/contract/base racket/string
-         "errors.rkt" "http.rkt" "sigv4.rkt")
+         "errors.rkt" "../http-client/main.rkt" "sigv4.rkt")
 (provide (struct-out exn:fail:s3)
          (struct-out exn:fail:s3:response)
          (struct-out exn:fail:s3:protocol)
@@ -83,7 +83,7 @@
 (define (get-object b key)
   (define r (request b "GET" key '() '() empty-payload-hash))
   (if (= (response-status r) 200)
-      (response-body r)
+      (s3-port (response-body r))
       (missing-or-raise! r key)))
 
 ;; S3Bucket Key -> (or ObjectInfo #f)
@@ -113,7 +113,7 @@
 (define (copy-object! b from to)
   (define source (string-append "/" (s3-bucket-name b) "/" (uri-encode from #:keep-slash? #t)))
   (define r (request b "PUT" to '() (list (cons "x-amz-copy-source" source)) empty-payload-hash))
-  (define body (response-body-bytes! r))
+  (define body (body-bytes! r))
   ;; S3 may answer 200 and still report a failure in the body
   (when (or (not (= (response-status r) 200)) (regexp-match? #rx#"<Error>" body))
     (raise-s3-error! r to body)))
@@ -127,10 +127,11 @@
 (define (request b method key query extra-headers payload-hash [body #f])
   (define e (s3-bucket-endpoint b))
   (define headers (signed-headers b method key query extra-headers payload-hash (current-seconds)))
-  (http-request (eq? (s3-endpoint-scheme e) 'https) (authority-host b) (s3-endpoint-port e)
-                method (request-target (object-path b key) query) headers body
-                #:connect-timeout (s3-endpoint-connect-timeout e)
-                #:idle-timeout (s3-endpoint-idle-timeout e)))
+  (with-s3-errors
+    (λ () (http-request (eq? (s3-endpoint-scheme e) 'https) (authority-host b) (s3-endpoint-port e)
+                        method (request-target (object-path b key) query) headers body
+                        #:connect-timeout (s3-endpoint-connect-timeout e)
+                        #:idle-timeout (s3-endpoint-idle-timeout e)))))
 
 ;; S3Bucket Key Query Headers String Natural -> Headers
 ;; the headers to send: `extra-headers`, Host, x-amz-date, x-amz-content-sha256 and Authorization
@@ -187,23 +188,46 @@
 
 ;; --- errors ---
 
+;; (-> X) -> X
+;; runs `thunk`, raising the S3 counterpart of any exn:fail:http it raises
+(define (with-s3-errors thunk)
+  (with-handlers ([exn:fail:http:protocol? (λ (e) (reraise exn:fail:s3:protocol e))]
+                  [exn:fail:http:timeout? (λ (e) (reraise exn:fail:s3:timeout e))]
+                  [exn:fail:http? (λ (e) (reraise exn:fail:s3 e))])
+    (thunk)))
+
+;; (String ContinuationMarks -> Exn) Exn -> Nothing
+(define (reraise make e)
+  (raise (make (exn-message e) (exn-continuation-marks e))))
+
+;; Response [Natural] -> Bytes
+;; `response-body-bytes!` with S3 exceptions
+(define (body-bytes! r [limit (* 1024 1024)])
+  (with-s3-errors (λ () (response-body-bytes! r limit))))
+
+;; InputPort -> InputPort
+;; `in`, except that the failures of reading it are S3 exceptions (the body streams lazily)
+(define (s3-port in)
+  (define (read-in buf) (with-s3-errors (λ () (read-bytes-avail! buf in))))
+  (make-input-port 's3-body read-in #f (λ () (close-input-port in))))
+
 ;; Response Key (Listof Natural) -> Void
 (define (expect-status! r key ok)
   (if (memv (response-status r) ok)
-      (void (response-body-bytes! r))
+      (void (body-bytes! r))
       (raise-s3-error! r key)))
 
 ;; Response Key -> #f
 ;; #f when `r` says the object does not exist (404 NoSuchKey), otherwise raises
 (define (missing-or-raise! r key)
-  (define body (response-body-bytes! r 65536))
+  (define body (body-bytes! r 65536))
   (if (and (= (response-status r) 404) (equal? (error-code body) "NoSuchKey"))
       #f
       (raise-s3-error! r key body)))
 
 ;; Response Key [Bytes] -> Nothing
 ;; raises an exn:fail:s3:response for an unexpected response, reading its (small) error document
-(define (raise-s3-error! r key [body (response-body-bytes! r 65536)])
+(define (raise-s3-error! r key [body (body-bytes! r 65536)])
   (define code (error-code body))
   (raise (exn:fail:s3:response (format "S3 request for ~a failed: HTTP ~a~a" key (response-status r)
                                        (if code (string-append " " code) ""))
@@ -294,4 +318,20 @@
   (test-case "HEAD parsing is defensive about Content-Length"
     (check-equal? (content-length (canned 200 '(("content-length" . "14")) #"")) 14)
     (for ([bad '(() (("content-length" . "x")) (("content-length" . "-1")))])
-      (check-exn exn:fail:s3:protocol? (λ () (content-length (canned 200 bad #"")))))))
+      (check-exn exn:fail:s3:protocol? (λ () (content-length (canned 200 bad #""))))))
+
+  (test-case "with-s3-errors maps each HTTP exception to its S3 counterpart"
+    (define (raising make) (λ () (with-s3-errors (λ () (raise (make "m" (current-continuation-marks)))))))
+    (check-exn (λ (e) (and (exn:fail:s3:protocol? e) (equal? (exn-message e) "m")))
+               (raising exn:fail:http:protocol))
+    (check-exn exn:fail:s3:timeout? (raising exn:fail:http:timeout))
+    (check-exn (λ (e) (and (exn:fail:s3? e) (not (exn:fail:s3:protocol? e)) (not (exn:fail:s3:timeout? e))))
+               (raising exn:fail:http))
+    (check-exn exn:fail:contract? (λ () (with-s3-errors (λ () (raise-argument-error 'x "y" 1)))))
+    (check-equal? (with-s3-errors (λ () 7)) 7))
+
+  (test-case "the body port raises S3 exceptions lazily"
+    (define failing (make-input-port 'cut (λ (buf) (raise (exn:fail:http:protocol "cut" (current-continuation-marks))))
+                                     #f void))
+    (check-equal? (read-bytes 3 (s3-port (open-input-bytes #"abcdef"))) #"abc")
+    (check-exn exn:fail:s3:protocol? (λ () (read-byte (s3-port failing))))))

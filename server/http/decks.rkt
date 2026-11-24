@@ -5,7 +5,7 @@
 (require racket/contract/base racket/match racket/string web-server/http
          "../qa.rkt" "../db/qa.rkt" "../auth/access.rkt" "../config.rkt" "../db/repo.rkt" "../db/vote-export.rkt" "../domain.rkt" "../export.rkt" "../live/hub.rkt"
          "../live/load.rkt" "../live/state.rkt" "../metrics/app.rkt" "../results.rkt" "../storage/store.rkt" "../uploads.rkt"
-         "deps.rkt" "endpoint.rkt" "inputs.rkt" "json.rkt" "lookup.rkt" "sse.rkt" "validate.rkt")
+         "deck-ops.rkt" "deps.rkt" "endpoint.rkt" "inputs.rkt" "json.rkt" "lookup.rkt" "sse.rkt" "validate.rkt")
 (provide (contract-out
           [list-presentations* user-handler/c]
           [create-presentation user-handler/c]
@@ -58,12 +58,13 @@
 ;; Deps User Id [#:status Natural] -> Response
 ;; the deck as `me` sees it; 404 when it is not visible to them
 (define (deck-response d me id #:status [status 200])
-  (json-response (hash-set (deck->jsexpr (need-deck d me id 'view)) 'qa_enabled (deck-qa-enabled? (db d) id)) #:status status))
+  (json-response (deck->jsexpr (need-deck d me id 'view) (deck-qa-enabled? (db d) id)) #:status status))
 
 (define-endpoint (list-presentations* d req me)
-  (json-response (for/list ([listing (list-presentations (db d) (user-id me) (equal? (query-param req 'archived) "1"))])
-                   (hash-set (presentation-listing->jsexpr listing) 'qa_enabled
-                             (deck-qa-enabled? (db d) (presentation-id (deck-presentation (presentation-listing-deck listing))))))))
+  (define listings (list-presentations (db d) (user-id me) (equal? (query-param req 'archived) "1")))
+  (define qa (decks-qa-enabled (db d) (map listing-id listings)))
+  (json-response (for/list ([l (in-list listings)])
+                   (presentation-listing->jsexpr l (hash-ref qa (listing-id l) #f)))))
 
 ;; (-> X) (-> Void) -> X
 ;; runs body; if it escapes by exception, break or jump, runs undo
@@ -116,8 +117,7 @@
 
 (define-endpoint (get-presentation* d req me id)
   #:need [dk (deck me id #:can view)]
-  (define result (hash-set (presentation-detail->jsexpr dk (list-polls (db d) id) (visible-sessions d dk))
-                           'qa_enabled (deck-qa-enabled? (db d) id)))
+  (define result (presentation-detail->jsexpr dk (deck-qa-enabled? (db d) id) (list-polls (db d) id) (visible-sessions d dk)))
   (define detail (if ((current-deck-disabled?) (db d) id) (hash-set result 'disabled #t) result))
   (json-response
    (if (access-allows? (deck-access dk) 'moderate) detail
@@ -125,9 +125,8 @@
                                       (for/list ([s sessions]) (hash-set* s 'screen_code 'null 'screen_url 'null)))))))
 
 (define-endpoint (patch-presentation d req me id)
-  #:need [dk (deck me id #:can edit)]
   #:json [in (title-input [title (string 1 200)])]
-  (rename-presentation! (db d) id (title-input-title in))
+  (op-rename-deck d me id (title-input-title in))
   (deck-response d me id))
 
 (define-endpoint (delete-presentation* d req me id)
@@ -197,55 +196,23 @@
   (archive-response d me id #f))
 
 ;; ------------------------------------------------------------------ polls
-;; -> Nothing
-(define (poll-has-runs!) (api-error! 409 "poll_has_runs" "poll has runs; duplicate it to edit"))
-
-;; Request Natural -> PollDraft
-;; the poll in the request body, shared by create and update; 422 naming the first bad field
-(define (request-poll-draft req page-count)
-  (define h (request-json req))
-  (make-poll-draft (body-slide-or-null h 'slide page-count) (hash-ref h 'question #f)
-                   (hash-ref h 'kind #f) (request-poll-options h)
-                   (body-bool-or-default h 'show_results #f) (body-bool-or-default h 'allow_additional_answers #f)))
-
-;; JSObject -> [Listof OptionDraft]
-;; parses option objects into trusted answer definitions
-(define (request-poll-options h)
-  (define raw (hash-ref h 'options #f))
-  (unless (list? raw) (invalid! 'options "options must have 2 to 30 items"))
-  (for/list ([o raw])
-    (unless (hash? o) (invalid! 'options "each option must be an object"))
-    (make-option-draft (hash-ref o 'label #f) (body-bool-or-default o 'exclusive #f))))
-
 (define-endpoint (create-poll* d req me pid)
-  #:need [dk (deck me pid #:can edit)]
-  (define draft (request-poll-draft req (presentation-page-count (deck-presentation dk))))
-  (json-response (poll->jsexpr (create-poll! (db d) pid draft)) #:status 201))
+  (json-response (poll->jsexpr (op-create-poll d me pid (jsexpr->poll-draft (request-json req)))) #:status 201))
 
 (define-endpoint (update-poll* d req me id)
-  #:need [existing (poll me id #:can edit)] [p (presentation-of existing)]
-  (define draft (request-poll-draft req (presentation-page-count p)))
-  (match (update-poll! (db d) id draft)
-    [#f (not-found! "poll not found")]
-    ['has-runs (poll-has-runs!)]
-    [updated (json-response (poll->jsexpr updated))]))
+  (json-response (poll->jsexpr (op-replace-poll d me id (jsexpr->poll-draft (request-json req))))))
 
 ;; the display setting stays editable after runs, unlike the poll's content
 (define-endpoint (patch-poll* d req me id)
-  #:need [pl (poll me id #:can edit)]
   #:json [in (show-results-input [show-results (boolean)])]
-  (json-response (poll->jsexpr (found (set-show-results! (db d) id (show-results-input-show-results? in)) "poll not found"))))
+  (json-response (poll->jsexpr (op-set-show-results d me id (show-results-input-show-results? in)))))
 
 (define-endpoint (delete-poll* d req me id)
-  #:need [pl (poll me id #:can edit)]
-  (match (delete-poll! (db d) id)
-    ['ok (no-content)]
-    ['has-runs (poll-has-runs!)]
-    [#f (not-found! "poll not found")]))
+  (op-delete-poll d me id)
+  (no-content))
 
 (define-endpoint (duplicate-poll* d req me id)
-  #:need [pl (poll me id #:can edit)]
-  (json-response (poll->jsexpr (found (duplicate-poll! (db d) id) "poll not found")) #:status 201))
+  (json-response (poll->jsexpr (op-duplicate-poll d me id)) #:status 201))
 
 ;; Deps Id Boolean -> Response
 (define (poll-archive-response d id archived?)
@@ -409,19 +376,15 @@
   #:need [s (session me code #:can results)]
   (csv-download (format "orquelo-~a.csv" code) (votes->csv (export-votes (db d) (session-id s)))))
 
-;; Deps Session Presentation -> SessionResults
-(define (results-of d s p)
-  (session-results s p (results-totals-row (db d) (session-id s)) (run-results (db d) (session-id s))))
-
 (define-endpoint (session-results* d req me code)
   #:need [s (session me code #:can results)] [p (presentation-of s)]
-  (json-response (hash-set (session-results->jsexpr (results-of d s p)) 'qa
+  (json-response (hash-set (session-results->jsexpr (session-results-of d s p)) 'qa
                            (qa-results->jsexpr (get-qa (db d) (session-id s))))))
 
 (define-endpoint (results-csv d req me code)
   #:need [s (session me code #:can results)] [p (presentation-of s)]
   (csv-download (format "orquelo-~a-results.csv" code)
-                (render-csv results-csv-header (results-csv-rows (results-of d s p)))))
+                (render-csv results-csv-header (results-csv-rows (session-results-of d s p)))))
 
 ;; Any -> Void
 ;; maps Q&A repository refusals to public API errors.
@@ -437,9 +400,8 @@
 ;; Deps Request User Id -> Response
 ;; configures Q&A availability for future sessions.
 (define-endpoint (set-deck-qa* d req me id)
-  #:need [dk (deck me id #:can edit)]
   #:json [in (qa-enabled-input [enabled (boolean)])]
-  (set-deck-qa! (db d) id (qa-enabled-input-enabled? in))
+  (op-set-qa-enabled d me id (qa-enabled-input-enabled? in))
   (no-content))
 
 ;; Deps Request User String -> Response
@@ -472,7 +434,7 @@
   (match result
     ['poll-not-open (api-error! 409 "poll_not_open" "this poll is not open")]
     ['not-allowed (api-error! 409 "additional_answers_disabled" "this poll does not allow additional answers")]
-    ['too-many (invalid! 'label "a poll may have at most 30 options")]
+    ['too-many (invalid! 'label (format "a poll may have at most ~a options" max-options))]
     ['invalid (invalid! 'exclusive "exclusive options require multiple choice")]
     [o
      (apply-event! d code (run-updated (get-run (db d) (run-option-input-run-id in))))

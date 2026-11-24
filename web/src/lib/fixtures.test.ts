@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import type {
   ModeratorSnapshot, EditorSnapshot, ApiErrorBody, AudienceSnapshot, Me, Poll, PollRotation, Presentation, PresentationListItem, ScreenSnapshot, SessionResults, Session, Share,
-  VoteResponse,
+  VoteResponse, OAuthRequest, OAuthRedirect, OAuthGrant,
 } from "./types";
 
 const load = (n: string) =>
@@ -117,5 +117,18 @@ describe("fixtures match types.ts", () => {
     keys(v, ["run_id", "option_ids"]);
     const e: ApiErrorBody = load("error");
     expect(isStr(e.error) && isStr(e.message)).toBe(true);
+  });
+  it("oauth", () => {
+    const client = ["name", "host", "uri", "verified"];
+    const r: OAuthRequest = load("oauth-request");
+    keys(r, ["id", "client", "redirect_host", "redirect_host_differs", "scopes"]);
+    keys(r.client, client);
+    r.scopes.forEach((x) => keys(x, ["name", "description", "requested"]));
+    keys(load("oauth-redirect") as OAuthRedirect, ["redirect_to"]);
+    const grants: OAuthGrant[] = load("oauth-grants");
+    grants.forEach((g) => {
+      keys(g, ["id", "client", "scopes", "created_at", "last_used_at", "needs_reconnect"]);
+      keys(g.client, client);
+    });
   });
 });

@@ -32,7 +32,7 @@
 (define (test-suite-body c)
   (test-case "migrate is idempotent"
     (check-equal? (migrate! c test-sources) '())
-    (check-equal? (query-list c "SELECT version FROM schema_migrations ORDER BY version") '("core/20261117000000_init.sql")))
+    (check-equal? (query-list c "SELECT version FROM schema_migrations ORDER BY version") '("core/20261117000000_init.sql" "core/20261124000000_oauth.sql")))
 
   (test-case "session epoch: a cookie matches only its own epoch; suspending bumps it, activating does not"
     (define id (create-user! c "epoch@example.org" #t "E"))

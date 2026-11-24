@@ -24,12 +24,25 @@
       });
       packages = forAll (a: import ./nix/packages.nix (a // { inherit (self.lib) mkOrquelo; }));
       checks = forAll (a: import ./nix/checks.nix (a // { self' = self.packages.${a.system}; }));
-      devShells = forAll ({ pkgs, racket, ... }: {
+      lib.racketTestPkgs = forAll (a: import ./nix/racket-test-pkgs.nix { inherit (a) pkgs racket; });
+      devShells = forAll ({ pkgs, racket, system, ... }: {
         default = pkgs.mkShellNoCC {
+          # test-only rackcheck (see nix/racket-test-pkgs.nix)
+          PLTCOLLECTS = "${self.lib.racketTestPkgs.${system}}/collects:";
           # e2e/ pins @playwright/test to this driver's version; Chromium only
           PLAYWRIGHT_BROWSERS_PATH = pkgs.playwright-driver.browsers.override { withFirefox = false; withWebkit = false; };
           PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS = "true";
-          packages = [ racket pkgs.nodejs_22 pkgs.postgresql pkgs.versitygw pkgs.curl ];
+          packages = [
+            racket
+            pkgs.nodejs_22
+            pkgs.postgresql
+            pkgs.versitygw
+            pkgs.curl
+            (pkgs.writeShellScriptBin "racket-langserver" ''exec ${racket}/bin/racket -l racket-langserver'')
+          ];
+          shellHook = ''
+            raco pkg install --auto racket-langserver
+          '';
         };
       });
     };

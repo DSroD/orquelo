@@ -1,5 +1,6 @@
 { pkgs, racket, self', ... }:
-{
+let testPkgs = import ./racket-test-pkgs.nix { inherit pkgs racket; };
+in {
   web = self'.web;
 
   # scripts/lint-migrations against a throwaway git repository
@@ -15,7 +16,7 @@
   # (SKIPPED, S3-SKIPPED).
   server = pkgs.runCommand "orquelo-server-tests"
     { nativeBuildInputs = [ racket pkgs.postgresql pkgs.versitygw pkgs.curl pkgs.bash pkgs.cacert ]; } ''
-    export HOME=$TMPDIR SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt
+    export HOME=$TMPDIR PLTCOLLECTS=${testPkgs}/collects: SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt
     # tests read ../docs/api-fixtures relative to server/
     mkdir docs && cp -r ${../docs/api-fixtures} docs/api-fixtures
     cp -r ${../server} server && chmod -R u+w server docs

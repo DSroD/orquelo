@@ -3,6 +3,7 @@
 ;; exist only at the edges (http/json.rkt). Contracts are enforced on construction.
 (require racket/contract/base racket/match racket/list racket/string "qa.rkt" "domain/parse.rkt")
 (provide id/c kind/c time/c overlay/c status/c
+         max-question-length max-label-length min-options max-options
          (contract-out
           [struct limits ([max-upload-bytes natural-number/c] [storage-quota-bytes (or/c natural-number/c #f)]
                           [plan (or/c string? #f)])]
@@ -16,6 +17,7 @@
           [struct owner ([email string?] [name string?])]
           [struct deck ([presentation presentation?] [owner owner?] [access access?])]
           [struct presentation-listing ([deck deck?] [live-sessions natural-number/c])]
+          [listing-id (-> presentation-listing? id/c)]
           [struct option ([id id/c] [idx natural-number/c] [label string?] [exclusive? boolean?])]
           [struct option-draft ([label string?] [exclusive? boolean?])]
           [make-option-draft (-> any/c any/c option-draft?)]
@@ -103,15 +105,26 @@
 ;; interp. a deck plus the number of its sessions still live.
 (struct presentation-listing (deck live-sessions) #:transparent)
 
+;; PresentationListing -> Id
+;; the id of the listed presentation.
+(define (listing-id l) (presentation-id (deck-presentation (presentation-listing-deck l))))
+
 ;; An Option is an (option Id Natural String Boolean)
 ;; interp. one answer of a poll or run; an exclusive answer must be chosen alone.
 (struct option (id idx label exclusive?) #:transparent)
 
+;; Natural
+;; the poll bounds, shared by every front end (REST, MCP): question and option label lengths, option count
+(define max-question-length 500)
+(define max-label-length 200)
+(define min-options 2)
+(define max-options 30)
+
 ;; Any Any Symbol -> (values String Boolean)
 ;; constructs a bounded, nonblank answer definition
 (define (parse-option-draft label exclusive? _)
-  (unless (and (string? label) (<= 1 (string-length label) 200))
-    (domain-error! 'label "label must be a string of 1 to 200 characters"))
+  (unless (and (string? label) (<= 1 (string-length label) max-label-length))
+    (domain-error! 'label (format "label must be a string of 1 to ~a characters" max-label-length)))
   (define trimmed (string-trim label))
   (when (string=? trimmed "") (domain-error! 'options "option labels must not be blank"))
   (unless (boolean? exclusive?) (domain-error! 'exclusive "exclusive must be a boolean"))
@@ -137,11 +150,11 @@
 (define (parse-poll-draft slide question kind options show-results? allow-additional? _)
   (unless (or (not slide) (exact-positive-integer? slide))
     (domain-error! 'slide "slide must be null or a positive integer"))
-  (unless (and (string? question) (<= 1 (string-length question) 500))
-    (domain-error! 'question "question must be a string of 1 to 500 characters"))
+  (unless (and (string? question) (<= 1 (string-length question) max-question-length))
+    (domain-error! 'question (format "question must be a string of 1 to ~a characters" max-question-length)))
   (unless (member kind '("single" "multi")) (domain-error! 'kind "kind must be single or multi"))
-  (unless (and (list? options) (<= 2 (length options) 30) (andmap option-draft? options))
-    (domain-error! 'options "options must have 2 to 30 items"))
+  (unless (and (list? options) (<= min-options (length options) max-options) (andmap option-draft? options))
+    (domain-error! 'options (format "options must have ~a to ~a items" min-options max-options)))
   (when (and (equal? kind "single") (ormap option-draft-exclusive? options))
     (domain-error! 'options "exclusive options require multiple choice"))
   (unless (boolean? show-results?) (domain-error! 'show_results "show_results must be a boolean"))
@@ -150,7 +163,7 @@
           options show-results? allow-additional?))
 
 ;; A PollDraft is a (poll-draft (or Id #f) String Kind [Listof OptionDraft] Boolean Boolean).
-;; interp. bounded poll content with 2 to 30 answers; exclusive answers require multi choice.
+;; interp. bounded poll content (min-options to max-options answers); exclusive answers require multi choice.
 (struct poll-draft (slide question kind options show-results? allow-additional?)
   #:transparent #:guard parse-poll-draft)
 

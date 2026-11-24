@@ -19,12 +19,21 @@ quality and idiom matter as much as behaviour.
   local-disk and an S3 backend chosen by `STORAGE=local|s3`
 - `server/s3/`: a generic S3 client (SigV4, TLS-verified HTTP/1.1) with no orquelo-specific
   code, so it can be published on its own
+- `server/http-client/`: a generic HTTP/1.1 client (TLS-verified, optional peer-address check), used by S3 and
+  the OAuth metadata fetch
+- `server/mcp/`: a generic MCP server library (JSON-RPC, `define-tool`, stateless Streamable HTTP handler). The
+  Orquelo tools are in `server/http/mcp-tools.rkt`; see `docs/mcp.md`
+- `server/oauth/`: a generic OAuth 2.1 authorization server (PKCE, CIMD, DCR, opaque tokens) over a pluggable
+  store. Orquelo's Postgres store is `server/db/oauth-store.rkt`, its routes `server/http/oauth-routes.rkt`.
+  Neither library imports Orquelo code. Its property and model-based tests live in `server/oauth/tests/` (rackcheck,
+  test-only: never require them from code reachable from `main.rkt`)
 - `web/`: Svelte 5 + Vite SPA. `web/src/lib/types.ts` mirrors the API contract
 - `e2e/`: Playwright user stories (`stories/*.spec.ts`) over helpers in `e2e/support` (actors: `Presenter`,
-  `Projector`, `Student`). Specs import `test`/`expect` only from `../support`
+  `Projector`, `Student`, `McpClient`). Specs import `test`/`expect` only from `../support`
 - `docs/api.md` + `docs/api-fixtures/`: **the API contract and source of truth**.
   The backend's JSON must equal the fixtures, and the frontend tests parse them
 - `docs/accounts.md`: password accounts (`user` CLI, throttling, sessions)
+- `docs/mcp.md`: the MCP endpoint for AI agents, its OAuth flow and tools
 - `LICENSE` (AGPL-3.0-only), `CLA.md` (contributors agree with "I agree to CLA.md" in the PR) and `CONTRIBUTING.md`
 - `compose.yaml`: self-hosting with Postgres on the published image; `CODE_OF_CONDUCT.md`, `SECURITY.md`
 - `.github/workflows/`: `verify.yml` (flake check, migration lint) and `publish.yml` (`vX.Y.Z` tag on main: amd64 + arm64
@@ -46,6 +55,9 @@ Run everything through the flake's devShell:
 - `scripts/build-image-in-docker [system] [attr]` then `scripts/e2e-image [image]`: builds the Linux OCI image
   in a Docker-hosted Nix (works on macOS) and tests it end to end against Postgres (password login, `user` CLI)
 - `scripts/dev`: local dev (`.env`, database `orquelo_core`); creates the database when it is missing
+- Property tests pick a random seed each run and print `property seed: PROP_SEED=<n>`; rerun with that `PROP_SEED` to
+  reproduce a failure, and set `PROP_SCALE=<k>` to run k times as many cases. rackcheck comes from the devShell
+  (`PLTCOLLECTS`) or `lib.racketTestPkgs`
 - `nix develop -c sh -c 'cd web && npm run test && npm run build'`
 - `nix flake check`
 

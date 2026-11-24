@@ -26,6 +26,14 @@
 ;; Connection -> Void
 ;; exercises persistence, isolation, moderation and submission limits.
 (define (run-tests c)
+  (test-case "decks-qa-enabled batches the deck setting"
+    (define owner (new-owner! c))
+    (define on (new-deck! c owner "On" 1))
+    (define off (new-deck! c owner "Off" 1))
+    (set-deck-qa! c on #t)
+    (check-equal? (decks-qa-enabled c '()) (hash))
+    (check-equal? (decks-qa-enabled c (list on off)) (hash on #t off #f))
+    (check-equal? (decks-qa-enabled c (list on 999999999)) (hash on #t)))
   (test-case "deck setting is captured at session creation; opening is explicit"
     (define-values (pid s) (setup-session! c #t))
     (define sid (session-id s))

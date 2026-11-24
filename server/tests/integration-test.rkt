@@ -220,6 +220,12 @@
     (check-equal? (resp-header r "Content-Type") "application/pdf")
     (check-equal? (bytes-length (resp-body r)) (bytes-length pdf2mb)))
 
+  (test-case "a JSON body over 1 MiB is refused"
+    (define big (bytes-append #"{\"x\":\"" (make-bytes (* 2 1024 1024) 97) #"\"}"))
+    (define r (with-handlers ([exn:fail? (λ (_) #f)])
+                (as-user "POST" (format "/api/decks/~a/polls" pid) #:data big #:headers '("Content-Type: application/json"))))
+    (check-false (and r (< (resp-status r) 400))))
+
   (define (option-inputs labels) (for/list ([label labels]) (hasheq 'label label 'exclusive #f)))
   (define (new-poll! #:slide [slide 3] #:kind [kind "single"] #:options [opts '("a" "b" "c")])
     (define r (as-user "POST" (format "/api/decks/~a/polls" pid)

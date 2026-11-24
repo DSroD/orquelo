@@ -6,6 +6,8 @@ type Text = string | RegExp;
 export type Overlay = "QR code" | "Slide only" | "Poll";
 export type NewPoll = { question: string; options: string[]; slide?: number; kind?: "single" | "multi" };
 
+const SCOPE_LABEL: Record<string, RegExp> = { decks: /Read and edit your decks/, results: /Read aggregate poll results/ };
+
 const step = <T>(title: string, body: () => Promise<T>): Promise<T> => test.step(title, body);
 
 export class Presenter {
@@ -45,6 +47,10 @@ export class Presenter {
     await this.page.getByRole("button", { name: "Log out" }).click();
     await expect(this.page).toHaveURL(/\/login/);
   });
+  signsInWhereSent = (pw = this.password) => step(`${this.email} signs in where the redirect sent them`, async () => {
+    await expect(this.page).toHaveURL(/\/login\?return_to=/);
+    await this.login.submit(this.page, this.email, pw);
+  });
   inAnotherBrowser = () => this.another();
 
   changesPassword = (to: string) => step("changes the password", async () => {
@@ -55,6 +61,29 @@ export class Presenter {
     await this.page.getByRole("button", { name: "Change password" }).click();
     await expect(this.page.getByRole("status")).toContainText("Password changed");
     this.password = to;
+  });
+
+  // connecting apps
+
+  seesConsentFor = (app: string, scopes: string[]) => step(`sees the consent page for "${app}"`, async () => {
+    await expect(this.page.getByRole("heading", { name: "Connect an app to Orquelo" })).toBeVisible();
+    await expect(this.page.getByText(app)).toBeVisible();
+    await expect(this.page.getByText("unverified", { exact: true })).toBeVisible();
+    await expect(this.page.getByText(/sent back to\s+127\.0\.0\.1/)).toBeVisible();
+    for (const s of scopes) await expect(this.page.getByRole("checkbox", { name: SCOPE_LABEL[s] })).toBeChecked();
+  });
+  approvesConnection = (scopes?: string[]) => step("approves the connection", async () => {
+    if (scopes)
+      for (const [name, label] of Object.entries(SCOPE_LABEL))
+        await this.page.getByRole("checkbox", { name: label }).setChecked(scopes.includes(name));
+    await this.page.getByRole("button", { name: "Approve" }).click();
+  });
+  deniesConnection = () => step("denies the connection", () => this.page.getByRole("button", { name: "Deny" }).click());
+  disconnects = (app: string) => step(`disconnects "${app}"`, async () => {
+    await this.page.goto("/connected-apps");
+    const row = this.item(app);
+    await row.getByRole("button", { name: "Disconnect" }).click();
+    await expect(row).toHaveCount(0);
   });
 
   // decks

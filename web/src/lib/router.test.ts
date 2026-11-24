@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import ext from "$ext";
-import { match } from "./router";
+import { match, safeReturnTo } from "./router";
 
 const code = "abcde23456";
 
@@ -16,6 +16,15 @@ describe("router.match", () => {
     expect(match("/decks/12")).toEqual({ name: "deck", id: 12 });
     expect(match(`/sessions/${code}`)).toEqual({ name: "session-live", code });
     expect(match(`/sessions/${code}/results`)).toEqual({ name: "session-results", code });
+  });
+  it("matches the OAuth pages", () => {
+    const id = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    expect(match(`/connect/${id}`)).toEqual({ name: "connect", id });
+    expect(match("/connect/short").name).toBe("not-found");
+    expect(match(`/connect/${id}/x`).name).toBe("not-found");
+    expect(match("/connect").name).toBe("not-found");
+    expect(match("/connected-apps")).toEqual({ name: "connected-apps" });
+    expect(match("/connected-apps/x").name).toBe("not-found");
   });
   it("serves /account through core's own extension", () => {
     expect(match("/account", ext.routes)).toEqual({ name: "ext", i: 0, params: {} });
@@ -44,5 +53,21 @@ describe("router.match", () => {
     expect(match("/x", ext)).toEqual({ name: "ext", i: 0, params: {} });
     expect(match("/x/extra", ext).name).toBe("not-found");
     expect(match("/decks", ext)).toEqual({ name: "decks" });
+  });
+});
+
+describe("safeReturnTo", () => {
+  it("keeps same-origin paths", () => {
+    expect(safeReturnTo("/decks?x=1#y")).toBe("/decks?x=1#y");
+    const id = "a".repeat(43);
+    expect(safeReturnTo(`/connect/${id}`)).toBe(`/connect/${id}`);
+  });
+  it("falls back to /decks for anything else", () => {
+    for (const bad of [
+      "/\\evil.com", "\\\\evil.com", "//evil.com", "/%5Cevil.com", "https://evil.com",
+      "javascript:alert(1)", null, "", "/\t/evil.com", "/\n/evil.com", "/a\rb",
+    ]) {
+      expect(safeReturnTo(bad), String(bad)).toBe("/decks");
+    }
   });
 });

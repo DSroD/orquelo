@@ -1,0 +1,13 @@
+{
+  "authorization_servers": [
+    "https://orquelo.example"
+  ],
+  "bearer_methods_supported": [
+    "header"
+  ],
+  "resource": "https://orquelo.example/mcp",
+  "scopes_supported": [
+    "decks",
+    "results"
+  ]
+}

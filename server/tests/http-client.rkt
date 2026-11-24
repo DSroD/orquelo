@@ -1,7 +1,7 @@
 #lang racket/base
 ;; A small HTTP client for the integration tests: plain requests, SSE streams and multipart uploads
 ;; against the server at `current-base`.
-(require racket/list racket/string racket/port json net/http-client net/url)
+(require racket/list racket/string racket/port json net/http-client net/uri-codec net/url)
 (provide current-base base-port
          (struct-out resp) resp-json resp-header resp-headers-all
          http sse-open multipart upload!)
@@ -23,15 +23,18 @@
   (for/list ([h (resp-headers r)] #:when (regexp-match? (byte-regexp (bytes-append #"(?i:^" (string->bytes/utf-8 name) #":)")) h))
     (bytes->string/utf-8 h)))
 
-(define (http method path #:json [j #f] #:data [data #f] #:cookies [cookies '()] #:origin [origin (current-base)] #:headers [extra '()])
+;; String [#:json JSExpr] [#:form (Listof (Pair Symbol String))] ... -> Resp
+;; one request; `#:form` sends application/x-www-form-urlencoded
+(define (http method path #:json [j #f] #:form [form #f] #:data [data #f] #:cookies [cookies '()] #:origin [origin (current-base)] #:headers [extra '()])
   (define headers
     (append (if (pair? cookies) (list (string-append "Cookie: " (string-join cookies "; "))) '())
             (if origin (list (string-append "Origin: " origin)) '())
             (if j '("Content-Type: application/json") '())
+            (if form '("Content-Type: application/x-www-form-urlencoded") '())
             extra))
   (define-values (status hdrs in)
     (http-sendrecv "127.0.0.1" path #:port (base-port) #:method method #:headers headers
-                   #:data (cond [j (jsexpr->bytes j)] [data data] [else #f])))
+                   #:data (cond [j (jsexpr->bytes j)] [form (string->bytes/utf-8 (alist->form-urlencoded form))] [data data] [else #f])))
   (define body (port->bytes in))
   (close-input-port in)
   (resp (string->number (cadr (regexp-match #rx" ([0-9]+) " (bytes->string/utf-8 status)))) hdrs body))

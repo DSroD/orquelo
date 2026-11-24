@@ -13,6 +13,8 @@
   const Editor = () => import("./decks/Editor.svelte");
   const Live = () => import("./decks/Live.svelte");
   const Results = () => import("./decks/Results.svelte");
+  const Connect = () => import("./oauth/Connect.svelte");
+  const ConnectedApps = () => import("./oauth/ConnectedApps.svelte");
 
   let path = $state(location.pathname);
   const route = $derived(match(path, ext.routes));
@@ -75,6 +77,10 @@
     {#await Live() then { default: C }}{#key route.code}<SignedIn><C code={route.code} /></SignedIn>{/key}{:catch}{@render failed()}{/await}
   {:else if route.name === "session-results"}
     {#await Results() then { default: C }}{#key route.code}<SignedIn><C code={route.code} /></SignedIn>{/key}{:catch}{@render failed()}{/await}
+  {:else if route.name === "connect"}
+    {#await Connect() then { default: C }}{#key route.id}<SignedIn><C id={route.id} /></SignedIn>{/key}{:catch}{@render failed()}{/await}
+  {:else if route.name === "connected-apps"}
+    {#await ConnectedApps() then { default: C }}<SignedIn><C /></SignedIn>{:catch}{@render failed()}{/await}
   {:else}
     <main class="nf"><h1>Page not found</h1><p class="muted">Check the link you were given.</p></main>
   {/if}

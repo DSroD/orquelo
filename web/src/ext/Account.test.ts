@@ -65,4 +65,10 @@ describe("Account", () => {
     await fill();
     await vi.waitFor(() => expect(hrefs).toEqual(["/login?return_to=%2Faccount"]));
   });
+
+  it("links to the connected apps", async () => {
+    stubFetch(() => me);
+    render(Account);
+    expect((await screen.findByRole("link", { name: "Connected apps" })).getAttribute("href")).toBe("/connected-apps");
+  });
 });

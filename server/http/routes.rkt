@@ -2,9 +2,10 @@
 ;; Route table plus the signed-in (session + Origin) guard and the top-level error handler.
 (require racket/contract/base racket/string net/url db/base web-server/http web-server/dispatch
          "../config.rkt" "../auth/session.rkt" "../auth/users.rkt" "../db/accounts.rkt" "../db/conn.rkt" "../domain.rkt" "../edition.rkt"
-         "decks.rkt" "deps.rkt" "instrument.rkt" "json.rkt" "public.rkt" "static.rkt")
+         "../oauth/cimd.rkt" "../oauth/data.rkt"
+         "decks.rkt" "deps.rkt" "instrument.rkt" "json.rkt" "mcp-routes.rkt" "oauth-routes.rkt" "public.rkt" "static.rkt")
 (provide (contract-out
-          [make-handler (-> deps? plugin? (-> request? response?))]
+          [make-handler (->* (deps? plugin?) (#:oauth-fetch (-> string? fetched?)) (-> request? response?))]
           [make-route-kit (-> deps? route-kit?)]
           [check-origin! (-> config? request? void?)]
           [mutating? (-> request? boolean?)]))
@@ -45,7 +46,7 @@
 
 ;; [Listof String] -> Boolean
 ;; does the path belong to the API (so unknown ones are JSON 404s, not the SPA)?
-(define (api-path? segs) (and (pair? segs) (member (car segs) '("api" "auth" "healthz")) #t))
+(define (api-path? segs) (and (pair? segs) (member (car segs) '("api" "auth" "healthz" "oauth" ".well-known" "mcp")) #t))
 
 ;; Natural: the largest id Postgres can hold
 (define max-id 9223372036854775807)
@@ -53,12 +54,6 @@
 ;; 404 for integer path arguments that are negative or beyond bigint
 (define (check-ids! args)
   (for ([a args]) (when (and (integer? a) (or (< a 0) (> a max-id))) (api-error! 404 "not_found" "not found"))))
-
-;; -> Response
-;; 503: the database pool stayed full; the client should retry shortly
-(define (busy-response)
-  (define r (error-response 503 "busy" "the server is busy, try again"))
-  (struct-copy response r [headers (cons (header #"Retry-After" #"1") (response-headers r))]))
 
 ;; Connection Handler -> Handler
 ;; maps API errors to JSON responses, a full pool to a 503 and anything else to a logged 500.
@@ -92,10 +87,29 @@
   (define ((named route f) req . args) (set-route! route) (apply f req args))
   (route-kit d signed-in public named (λ (req) (check-origin! (deps-cfg d) req))))
 
-;; Deps Plugin -> Handler
+;; Response -> Response
+;; the SPA response, never framed (clickjacking)
+(define (unframed r)
+  (struct-copy response r [headers (cons (header #"Content-Security-Policy" #"frame-ancestors 'none'")
+                                         (response-headers r))]))
+
+;; Response -> Response
+;; the SPA page of a consent request, never leaking its URL as a referrer
+(define (consent-page r)
+  (struct-copy response r [headers (cons (header #"Referrer-Policy" #"no-referrer") (response-headers r))]))
+
+;; [Listof String] -> Boolean
+;; is this the consent page? Empty segments are dropped first, as the SPA's own route parsing does, so
+;; `//connect/<id>` counts
+(define (consent-path? segs)
+  (define named (filter non-empty-string? segs))
+  (and (pair? named) (equal? (car named) "connect")))
+
+;; Deps Plugin [#:oauth-fetch (String -> Fetched)] -> Handler
 ;; the dispatching request handler; every request is recorded under its route template. Requests no core
-;; route matches go to the plugin's routes, whose own fallback is the 404/static one.
-(define (make-handler d p)
+;; route matches go to the OAuth routes (when the base URL allows them), then to the plugin's routes, whose
+;; own fallback is the 404/static one. `oauth-fetch` retrieves client metadata documents.
+(define (make-handler d p #:oauth-fetch [oauth-fetch cimd-fetch])
   (define cfg (deps-cfg d))
   (define kit (make-route-kit d))
   (define signed-in (route-kit-signed-in kit))
@@ -120,14 +134,20 @@
     (cond [(or (api-path? segs) (not (equal? (method-of req) "GET")))
            (set-route! "not_found")
            (api-error! 404 "not_found" "no such endpoint")]
-          [else (set-route! "static") (static-response (config-static-dir cfg) segs)]))
+          [else (set-route! "static")
+                (define page (static-response (config-static-dir cfg) segs))
+                (unframed (if (consent-path? segs) (consent-page page) page))]))
 
   (define dispatch-plugin ((plugin-routes p) kit fallback))
+  (define oauth-routes (make-oauth-routes d oauth-fetch))
+  (define dispatch-rest (if oauth-routes ((oauth-routes-routes oauth-routes) kit dispatch-plugin) dispatch-plugin))
+  (define mcp (and oauth-routes (make-mcp-handler d oauth-routes)))
   (define-values (dispatch _url)
     (dispatch-rules
      [("healthz") #:method "get" (named "/healthz" (λ (req) (text-response 200 "ok")))]
      [("api" "me") #:method "get" (named "/api/me" me)]
      [("auth" "logout") #:method "post" (named "/auth/logout" logout)]
+     [("mcp") #:method _ (named "/mcp" (or mcp fallback))]
      ;; public
      [("api" "s" "cookies") #:method "get" (public "/api/s/cookies" get-participant-choice)]
      [("api" "s" "cookies") #:method "post"
@@ -184,7 +204,7 @@
      [("api" "sessions" (string-arg) "export.csv") #:method "get" (signed-in "/api/sessions/:code/export.csv" export-csv)]
      [("api" "sessions" (string-arg) "results") #:method "get" (signed-in "/api/sessions/:code/results" session-results*)]
      [("api" "sessions" (string-arg) "results.csv") #:method "get" (signed-in "/api/sessions/:code/results.csv" results-csv)]
-     [else dispatch-plugin]))
+     [else dispatch-rest]))
   (define (dispatch-with-storage req)
     (parameterize ([current-deck-disabled? (if (storage-plugin? p)
                                                (storage-plugin-disabled? p)
@@ -211,6 +231,13 @@
     (check-false (rejected? (λ () (check-origin! cfg (req #"PATCH" #"http://localhost:8080"))))))
   (test-case "origin not required for GET"
     (check-false (rejected? (λ () (check-origin! cfg (req #"GET"))))))
+  (test-case "the consent page is found as the SPA parses it"
+    (check-true (consent-path? '("connect" "abc")))
+    (check-true (consent-path? '("" "connect" "abc")))
+    (check-true (consent-path? '("" "" "connect")))
+    (check-false (consent-path? '("connected-apps")))
+    (check-false (consent-path? '("decks" "connect")))
+    (check-false (consent-path? '())))
   (test-case "mutating methods"
     (check-true (mutating? (req #"post")))
     (check-false (mutating? (req #"GET")))))

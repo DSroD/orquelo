@@ -1,0 +1,15 @@
+{
+  "id": "Zm9vYmFyYmF6cXV4cXV1eGNvcmdlZ3JhdWx0Z2FycGx",
+  "client": {
+    "name": "Example Agent",
+    "host": "agent.example",
+    "uri": "https://agent.example",
+    "verified": true
+  },
+  "redirect_host": "agent.example",
+  "redirect_host_differs": false,
+  "scopes": [
+    { "name": "decks", "description": "Read and edit your decks, polls and deck settings", "requested": true },
+    { "name": "results", "description": "Read aggregate poll results of your decks", "requested": false }
+  ]
+}

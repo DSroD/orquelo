@@ -1,0 +1,15 @@
+[
+  {
+    "id": "q1w2e3r4t5y6u7i8o9p0aa",
+    "client": {
+      "name": "Example Agent",
+      "host": "agent.example",
+      "uri": "https://agent.example",
+      "verified": true
+    },
+    "scopes": ["decks", "results"],
+    "created_at": "2026-11-15T10:00:00.000Z",
+    "last_used_at": "2026-11-15T10:05:00.000Z",
+    "needs_reconnect": false
+  }
+]

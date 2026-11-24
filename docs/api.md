@@ -4,7 +4,7 @@
 - JSON keys are `snake_case`. Timestamps are ISO-8601 UTC strings (`"2026-11-15T10:00:00.000Z"`) or `null`. Slides are 1-based.
 - `pid` = presentation id (integer in path). `code` (audience) and `screen_code` (presenter) both match `^[a-z2-7]{10}$` and are independent random values. The audience link `/:pid/:code` grants voting, Q&A submission and the audience stream only; the projector link `/screen/:pid/:screen_code` grants the screen stream and the slides PDF. `screen_code` is shown to moderators only.
 - Error body for `/api/*`: `{"error": "<code>", "message": "<human text>", "field": "<optional>"}`. `/auth/*` errors are plain-text pages.
-- Mutating requests (POST/PUT/PATCH/DELETE under `/api/decks`, `/api/polls` and `/api/sessions`) must send an `Origin` equal to `PUBLIC_BASE_URL`; otherwise the response is 403 `bad_origin`. Combined with `SameSite=Lax`, this covers CSRF.
+- Mutating requests (POST/PUT/PATCH/DELETE under `/api/decks`, `/api/polls`, `/api/sessions` and `/api/oauth`) must send an `Origin` equal to `PUBLIC_BASE_URL`; otherwise the response is 403 `bad_origin`. Combined with `SameSite=Lax`, this covers CSRF.
 
 | HTTP | `error` | When |
 |---|---|---|
@@ -93,8 +93,40 @@ Me = {user: {id:int, email:string|null, name:string},
                    max_upload_bytes:int}}     // largest single PDF the user may upload
 ```
 
+### OAuth & connected apps
+Orquelo is its own OAuth 2.1 authorization server for AI agents and other apps that act for a user (authorization code with PKCE `S256`, public clients only, one resource `PUBLIC_BASE_URL/mcp`). Clients identify themselves by a client ID metadata document (the `client_id` is an https URL) or by dynamic registration. The scopes are `decks` ("Read and edit your decks, polls and deck settings") and `results` ("Read aggregate poll results of your decks"). The discovery and protocol endpoints are public and speak RFC 6749 / 7591 / 8414 / 9728; every one of them is a plain 404 when OAuth is disabled, which is the case when `PUBLIC_BASE_URL` has a path or is `http` on a non-loopback host.
+
+Every `/.well-known/*` path belongs to the API: those not listed here answer a JSON 404. `/oauth/token` and `/oauth/register` have CORS too (`Access-Control-Allow-Origin: *`, `OPTIONS` preflight, also on their 429s).
+
+| Method & path | Behaviour |
+|---|---|
+| `GET /.well-known/oauth-protected-resource` (also `.../oauth-protected-resource/mcp`) | `200` `oauth-protected-resource.json`. CORS `Access-Control-Allow-Origin: *`, `OPTIONS` preflight |
+| `GET /.well-known/oauth-authorization-server` | `200` `oauth-authorization-server.json`. CORS as above |
+| `GET /oauth/authorize` | A valid request is parked for 10 minutes and answered `302` to `/connect/<id>` (`id`: 43 base64url characters). Any fault, such as an unknown client or a redirect URI the client did not register, is a `400` HTML page and never a redirect. Only the user's Deny redirects to the client, with `error=access_denied`. 429 `throttled`: 60 per minute per client address (an IPv6 address counts by its /64) |
+| `POST /oauth/token` | Form body (`authorization_code` or `refresh_token` grant), `200` JSON with `Cache-Control: no-store`; errors are RFC 6749 JSON (`invalid_grant`, ...). CORS and `OPTIONS` preflight. 429 `throttled`: 60 per minute per address (IPv6 by its /64), and an `invalid_grant` strikes the (`client_id`, address) pair with the login back-off |
+| `POST /oauth/register` | RFC 7591 JSON body, `201` JSON, errors as RFC 7591. 429 `throttled`: 10 per hour per address; 429 `temporarily_unavailable` (with `Retry-After`) while 1000 registered clients that no one has approved are stored (they are deleted after 24 hours) |
+| `GET /api/oauth/requests/:id` | Signed in. `200 OAuthRequest` · 401 · 403 `suspended` · 404 `not_found` (unknown, expired or used id) |
+| `POST /api/oauth/requests/:id/approve` | Signed in, Origin required. Body `{scopes:[string]}` (1 to 2 distinct names). `200 OAuthRedirect` carrying `code`, the client's `state` and `iss` · 401 · 403 `bad_origin` / `suspended` · 404 `not_found` (request gone, expired or used) · 422 `invalid` with `field: "scopes"` (an unknown or repeated name, or none the client asked for; the request is left alone). Scopes the client did not ask for are dropped. Each approval creates its own connected app |
+| `POST /api/oauth/requests/:id/deny` | Signed in, Origin required, no body. `200 OAuthRedirect` carrying `error=access_denied` and `state`; approve and deny replies are `Cache-Control: no-store` · 404 `not_found` |
+| `GET /api/oauth/grants` | Signed in. `200 [OAuthGrant]`, newest first; only apps that have been used |
+| `DELETE /api/oauth/grants/:id` | Signed in, Origin required. `204`, and every token of the app stops working · 404 `not_found` (not the user's grant) |
+
+```
+OAuthClient   = {name:string,            // chosen by the client: display only, not verified
+                 host:string|null,       // the host of its metadata document: the only verified identity; null for a registered client
+                 uri:string|null, verified:bool}   // verified = host is not null
+OAuthRequest  = {id, client: OAuthClient,
+                 redirect_host:string,   // the host the user is sent back to
+                 redirect_host_differs:bool,   // true when it is not the client's verified host
+                 scopes: [{name, description, requested:bool}]}   // every scope, in server order
+OAuthRedirect = {redirect_to:string}
+OAuthGrant    = {id, client: OAuthClient, scopes:[string], created_at, last_used_at, needs_reconnect:bool}
+                // needs_reconnect: the user's sessions were reset since (password change, suspension); the app must be connected again
+```
+Every SPA page is served with `Content-Security-Policy: frame-ancestors 'none'`. The SPA pages are `/connect/<id>` (consent; served with `Referrer-Policy: no-referrer`, and signed-out visitors are sent to `/login?return_to=/connect/<id>`) and `/connected-apps`. Fixtures: `oauth-request.json`, `oauth-redirect.json`, `oauth-grants.json`, `oauth-protected-resource.json` and `oauth-authorization-server.json` (the last two for the issuer `https://orquelo.example`; a rackunit test checks them against the library's output).
+
 ### Deck access
-Each deck has an owner (the uploader). The owner may do everything; anyone else needs a share, which applies to the user whose **verified** email equals the share's email (so a deck can be shared before the person has ever logged in). A share grants view plus the flags set on it: `edit` (rename, polls, deck Q&A configuration, live option additions), `moderate` (run sessions, the moderator stream), `copy` (copy the deck), `results` (the results page and every CSV: they hold personal data). Archive, unarchive, delete and shares are owner-only. A deck the user cannot see is 404 on every endpoint (so ids do not leak); a visible deck without the needed flag is 403 `forbidden`; for session endpoints access is checked before the 410. Moderators still see live aggregate tallies on the moderator stream, which running a poll needs. Edit-only collaborators may discover sessions and use the same stream through a restricted projection: current poll and tallies only, no Q&A inbox, projector credentials, stage, connection counts or run history. Editing does not grant moderation controls.
+Each deck has an owner (the uploader). The owner may do everything; anyone else needs a share, which applies to the user whose **verified** email equals the share's email (so a deck can be shared before the person has ever logged in). A share grants view plus the flags set on it: `edit` (rename, polls, deck Q&A configuration, live option additions), `moderate` (run sessions, the moderator stream), `copy` (copy the deck), `results` (the results page and every CSV: they hold personal data). Archive, unarchive, delete and shares are owner-only. A deck the user cannot see is 404 on every endpoint (so ids do not leak); a visible deck without the needed flag is 403 `forbidden`; for session endpoints access is checked before the 410. Moderators still see live aggregate tallies on the moderator stream, which running a poll needs. Edit-only collaborators may discover sessions and use the same stream through a restricted projection: current poll and tallies only, no Q&A inbox, projector credentials, stage, connection counts or run history. Editing does not grant moderation controls. The MCP tools (`docs/mcp.md`) differ on one point: with the `results` flag, `list_sessions` and `get_results` show every session of the deck (labels, times and aggregates, never codes), while `GET /api/decks/:id` lists sessions only to editors and moderators.
 
 Known limit: access is checked when a request or stream starts. Revoking a share (or its `moderate` flag) does not stop a moderator SSE stream that is already open; it ends when the client reconnects, and the reconnect is refused.
 

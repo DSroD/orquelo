@@ -23,16 +23,20 @@
 ;; gets a 413 too_large, while web-server drops a file over its own cap without any response.
 (define upload-headroom (* 10 1024 1024))
 
+;; Natural
+;; web-server reads a non-multipart body (JSON, form) into memory up to Content-Length, so keep it small
+(define max-body-bytes (* 1024 1024))
+
 ;; Natural -> SafetyLimits
-;; the request caps for uploads of up to `max-upload` bytes: the file cap and the body cap (the rest of
-;; the form) leave `upload-headroom` each.
+;; the request caps: bodies other than multipart are limited to `max-body-bytes`; PDF uploads (multipart)
+;; are limited by the file cap, `max-upload` plus `upload-headroom`.
 ;; Browsers send every cookie for the host in one header line; the 8 KiB default is too small.
 ;; The default cap of 10000 concurrent connections counts idle keep-alive ones too, so it would
 ;; refuse SSE streams long before the hub is the bottleneck.
 (define (safety-limits-for max-upload)
   (make-safety-limits #:max-concurrent 50000
                       #:max-request-header-length (* 64 1024)
-                      #:max-request-body-length (+ max-upload (* 2 upload-headroom))
+                      #:max-request-body-length max-body-bytes
                       #:max-form-data-file-length (+ max-upload upload-headroom)
                       #:form-data-file-memory-threshold (* 8 1024 1024)))
 

@@ -186,7 +186,7 @@
        [(".well-known" "oauth-authorization-server") #:method _ (discovery "/.well-known/oauth-authorization-server" handle-as-metadata)]
        [("oauth" "authorize") #:method _ (public "/oauth/authorize" authorize)]
        [("oauth" "token") #:method _ (named "/oauth/token" (cross-origin #"POST, OPTIONS" (λ (req) (or-429 (λ () (token req))))))]
-       [("oauth" "register") #:method _ (public "/oauth/register" register)]
+       [("oauth" "register") #:method _ (named "/oauth/register" (cross-origin #"POST, OPTIONS" (λ (req) (or-429 (λ () (register req))))))]
        [("api" "oauth" "requests" (string-arg)) #:method "get" (signed-in "/api/oauth/requests/:id" get-request)]
        [("api" "oauth" "requests" (string-arg) "approve") #:method "post" (signed-in "/api/oauth/requests/:id/approve" approve-request)]
        [("api" "oauth" "requests" (string-arg) "deny") #:method "post" (signed-in "/api/oauth/requests/:id/deny" deny-request)]

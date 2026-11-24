@@ -120,7 +120,7 @@
     (check-equal? (hash-ref (resp-json as) 'issuer) base)
     (check-equal? (hash-ref (resp-json as) 'token_endpoint) (string-append base "/oauth/token"))
     (check-equal? (resp-header as "Access-Control-Allow-Origin") "*")
-    (for ([p '("/oauth/token" "/.well-known/oauth-authorization-server")])
+    (for ([p '("/oauth/token" "/oauth/register" "/.well-known/oauth-authorization-server")])
       (define pre (http "OPTIONS" p #:origin "https://app.example"))
       (check-equal? (resp-status pre) 204 p)
       (check-equal? (resp-header pre "Access-Control-Allow-Origin") "*")
@@ -245,6 +245,7 @@
   (test-case "dynamic registration, then an unverified client at the consent page"
     (define r (http "POST" "/oauth/register" #:json (hasheq 'client_name "Dyn App" 'redirect_uris '("https://dyn.example/cb"))))
     (check-equal? (resp-status r) 201)
+    (check-equal? (resp-header r "Access-Control-Allow-Origin") "*")
     (define cid (hash-ref (resp-json r) 'client_id))
     (define id (pending-id (http "GET" (string-append "/oauth/authorize?"
                                                       (alist->form-urlencoded
@@ -257,11 +258,13 @@
 
   (test-case "connected apps: listed once used, disconnected only by their owner"
     (define code (approved-code (authorize!) cookie))
-    (define before (length (resp-json (http "GET" "/api/oauth/grants" #:cookies (list cookie)))))
+    (define before (map (λ (g) (hash-ref g 'id)) (resp-json (http "GET" "/api/oauth/grants" #:cookies (list cookie)))))
     (check-equal? (resp-status (token-request code verifier)) 200)
-    (define gs (resp-json (http "GET" "/api/oauth/grants" #:cookies (list cookie))))
-    (check-equal? (length gs) (add1 before))
-    (define g (first gs))
+    ;; picked by id: grants created within the same second have no defined order
+    (define new (filter (λ (g) (not (member (hash-ref g 'id) before)))
+                        (resp-json (http "GET" "/api/oauth/grants" #:cookies (list cookie)))))
+    (check-equal? (length new) 1)
+    (define g (first new))
     (check-equal? (sort (hash-keys g) symbol<?) '(client created_at id last_used_at needs_reconnect scopes))
     (check-equal? (hash-ref g 'scopes) '("decks" "results"))
     (check-false (hash-ref g 'needs_reconnect))
@@ -290,7 +293,9 @@
       (define limited (for/first ([i 70] #:when (= 429 (resp-status (thunk)))) (thunk)))
       (check-true (and limited #t) path)
       (check-true (and (resp-header limited "Retry-After") #t) path)
-      (check-equal? (code-of limited) "throttled"))
+      (check-equal? (code-of limited) "throttled")
+      (when (member path '("/oauth/token" "/oauth/register"))
+        (check-equal? (resp-header limited "Access-Control-Allow-Origin") "*" path)))
     (burst "/oauth/token" (λ () (token-request "nope" verifier #:client "https://nobody.example/c")))
     (burst "/oauth/register" (λ () (http "POST" "/oauth/register" #:json (hasheq 'redirect_uris '("https://dyn.example/cb")))))
     (burst "/oauth/authorize" (λ () (http "GET" "/oauth/authorize")))))

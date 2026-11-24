@@ -96,7 +96,7 @@ Me = {user: {id:int, email:string|null, name:string},
 ### OAuth & connected apps
 Orquelo is its own OAuth 2.1 authorization server for AI agents and other apps that act for a user (authorization code with PKCE `S256`, public clients only, one resource `PUBLIC_BASE_URL/mcp`). Clients identify themselves by a client ID metadata document (the `client_id` is an https URL) or by dynamic registration. The scopes are `decks` ("Read and edit your decks, polls and deck settings") and `results` ("Read aggregate poll results of your decks"). The discovery and protocol endpoints are public and speak RFC 6749 / 7591 / 8414 / 9728; every one of them is a plain 404 when OAuth is disabled, which is the case when `PUBLIC_BASE_URL` has a path or is `http` on a non-loopback host.
 
-Every `/.well-known/*` path belongs to the API: those not listed here answer a JSON 404. `/oauth/register` has no CORS (server-side clients only in v1).
+Every `/.well-known/*` path belongs to the API: those not listed here answer a JSON 404. `/oauth/token` and `/oauth/register` have CORS too (`Access-Control-Allow-Origin: *`, `OPTIONS` preflight, also on their 429s).
 
 | Method & path | Behaviour |
 |---|---|

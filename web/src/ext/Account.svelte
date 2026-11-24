@@ -41,6 +41,7 @@
 
 <AccountPage>
   {#snippet children(me)}
+    <p><a href="/connected-apps">Connected apps</a></p>
     <form class="stack" onsubmit={change}>
       <h2>Change password</h2>
       <input class="sr-only" type="text" value={me.user.email ?? me.user.name} readonly autocomplete="username" aria-hidden="true" tabindex="-1" />

@@ -128,3 +128,14 @@ export interface SessionResults {
   qa: { enabled: boolean; questions: Question[] };
   runs: RunResult[]; // oldest first
 }
+
+// OAuth consent and connected apps (docs/api.md)
+export interface OAuthClient { name: string; host: string | null; uri: string | null; verified: boolean }
+export interface OAuthScope { name: string; description: string; requested: boolean }
+export interface OAuthRequest {
+  id: string; client: OAuthClient; redirect_host: string; redirect_host_differs: boolean; scopes: OAuthScope[];
+}
+export interface OAuthRedirect { redirect_to: string }
+export interface OAuthGrant {
+  id: string; client: OAuthClient; scopes: string[]; created_at: ISOTime; last_used_at: ISOTime | null; needs_reconnect: boolean;
+}

@@ -21,7 +21,8 @@
           [struct vote-input ([run-id id/c] [option-ids (listof id/c)])]
           [struct upload-input ([title string?] [page-count id/c] [pdf input-port?])]
           [struct login-input ([email string?] [password string?])]
-          [struct password-change-input ([current string?] [new string?])]))
+          [struct password-change-input ([current string?] [new string?])]
+          [struct approve-input ([scopes (listof string?)])]))
 
 ;; Each input is a struct of the validated fields of one request body:
 ;; A TitleInput is a (title-input String): a new presentation title.
@@ -68,3 +69,6 @@
 
 ;; A ParticipantChoiceInput is a (participant-choice-input Boolean): whether to remember the browser across sessions.
 (struct participant-choice-input (remember?))
+
+;; An ApproveInput is an (approve-input [Listof String]): the scopes a user lets an OAuth client have.
+(struct approve-input (scopes))

@@ -2,10 +2,11 @@
 ;; Entry point: config -> migrate -> serve. `racket server/main.rkt` runs the `main` submodule.
 (require racket/contract/base racket/file racket/list racket/match racket/string racket/async-channel web-server/web-server web-server/servlet-dispatch web-server/safety-limits
          "config.rkt" "db/accounts.rkt" "db/conn.rkt" "db/migrate.rkt" "live/hub.rkt" "live/load.rkt"
-         "edition.rkt" "http/deps.rkt" "http/metrics.rkt" "http/routes.rkt"
+         "edition.rkt" "http/deps.rkt" "http/metrics.rkt" "http/routes.rkt" "oauth/cimd.rkt" "oauth/data.rkt"
          "metrics/app.rkt" "metrics/live.rkt" "metrics/registry.rkt" "metrics/runtime.rkt" db/base)
 (provide (contract-out
-          [start-server (->* (config? #:plugin plugin?) (#:port (integer-in 0 65535) #:pool-size exact-positive-integer? #:on-hub (-> hub? any)) (-> any))]
+          [start-server (->* (config? #:plugin plugin?) (#:port (integer-in 0 65535) #:pool-size exact-positive-integer? #:on-hub (-> hub? any)
+                                                       #:oauth-fetch (-> string? fetched?)) (-> any))]
           [safety-limits-for (-> natural-number/c safety-limits?)]
           [env->hash (-> env/c)]
           [run-command (-> edition? (vectorof string?) env/c input-port? output-port? (or/c exact-integer? #f))]
@@ -61,13 +62,13 @@
     (define count (dynamic-wind void (λ () (count-users pool)) (λ () (disconnect pool))))
     (list (family "orquelo_accounts" "Registered accounts" 'gauge (list (sample "" '() count))))))
 
-;; Config #:plugin Plugin [#:port Natural] [#:pool-size Natural] [#:on-hub (Hub -> Any)] -> (-> Void)
+;; Config #:plugin Plugin [#:port Natural] [#:pool-size Natural] [#:on-hub (Hub -> Any)] [#:oauth-fetch (String -> Fetched)] -> (-> Void)
 ;; migrates, starts listening (and serves /metrics on the metrics port, if configured); the thunk stops it all.
 ;; `on-hub` sees the running hub, for tooling such as a profiler of the hub thread.
 ;; The hub, the GC listener and the listeners' threads live under one custodian, so they can be counted
 ;; (racket_threads) and shut down together.
 (define (start-server cfg #:plugin plugin #:port [port (config-port cfg)] #:pool-size [pool-size (config-pool-size cfg)]
-                      #:on-hub [on-hub void])
+                      #:on-hub [on-hub void] #:oauth-fetch [oauth-fetch cimd-fetch])
   (define admin-conn (connect-direct (config-database-url cfg)))
   (for ([v (migrate! admin-conn (config-migrations cfg))]) (eprintf "migrated ~a\n" v))
   (disconnect admin-conn)
@@ -84,7 +85,7 @@
         (define hub (make-hub (make-loader pool cfg) #:metrics metrics #:record-peaks (make-peak-recorder pool)))
         (on-hub hub)
         (add-process-metrics! metrics hub server-cust root)
-        (define stop-app (listen (make-handler (deps cfg pool hub metrics (config->store cfg) (plugin-limits plugin)) plugin) port
+        (define stop-app (listen (make-handler (deps cfg pool hub metrics (config->store cfg) (plugin-limits plugin)) plugin #:oauth-fetch oauth-fetch) port
                                       (safety-limits-for (config-max-upload-bytes cfg))))
         (define stop-metrics
           (with-handlers ([exn:fail? (λ (e) (stop-app) (raise e))])

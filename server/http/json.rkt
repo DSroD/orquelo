@@ -1,8 +1,8 @@
 #lang racket/base
 ;; The HTTP edge: JSON responses, API errors, request-body parsing, and the explicit
 ;; struct -> jsexpr encoders (the only place domain data becomes hashes).
-(require racket/contract/base racket/match racket/list racket/port json net/url web-server/http
-         "../domain.rkt" "../qa.rkt" "../live/snapshot.rkt" "../results.rkt")
+(require racket/contract/base racket/match racket/list racket/port racket/format json net/url web-server/http
+         (prefix-in o: "../oauth/data.rkt") "../domain.rkt" "../qa.rkt" "../live/snapshot.rkt" "../results.rkt")
 (provide (contract-out
           [struct (exn:api exn:fail) ([message string?] [continuation-marks continuation-mark-set?] [status natural-number/c] [code string?] [field (or/c string? #f)])]
           [api-error! (->* (natural-number/c string? string?) ((or/c string? #f)) none/c)]
@@ -27,6 +27,8 @@
           [vote-receipt->jsexpr (-> id/c (listof id/c) jsexpr?)]
           [session-results->jsexpr (-> session-results? jsexpr?)]
           [snapshot->jsexpr (-> snapshot? jsexpr?)]
+          [pending-info->jsexpr (-> o:pending-info? (listof (cons/c string? string?)) jsexpr?)]
+          [grant-info->jsexpr (-> o:grant-info? jsexpr?)]
           [pdf-response (-> input-port? (listof header?) response?)]))
 
 ;; An ApiError is an (exn:api String Marks Natural String (or String #f))
@@ -304,6 +306,42 @@
                            'changed_voters (or-null (results-totals-changed-voters t)))
           'runs (map run-result->jsexpr runs) 'qa (hasheq 'enabled #f 'questions '())))
 
+;; Natural -> String
+;; the ISO-8601 UTC timestamp, to the millisecond, of epoch seconds
+(define (epoch->iso secs)
+  (define d (seconds->date secs #f))
+  (define (two n) (~r n #:min-width 2 #:pad-string "0"))
+  (format "~a-~a-~aT~a:~a:~a.000Z" (~r (date-year d) #:min-width 4 #:pad-string "0") (two (date-month d)) (two (date-day d))
+          (two (date-hour d)) (two (date-minute d)) (two (date-second d))))
+
+;; String (or String #f) (or String #f) Boolean -> JSExpr
+;; the {name, host, uri, verified} of an OAuth client
+(define (oauth-client->jsexpr name host uri verified?)
+  (hasheq 'name name 'host (or-null host) 'uri (or-null uri) 'verified verified?))
+
+;; PendingInfo (Listof (cons String String)) -> JSExpr
+;; an OAuth authorization request for the consent page; `descriptions` are the app's scopes by name
+(define (pending-info->jsexpr p descriptions)
+  (hasheq 'id (o:pending-info-id p)
+          'client (oauth-client->jsexpr (o:pending-info-client-name p) (o:pending-info-client-host p)
+                                        (o:pending-info-client-uri p) (o:pending-info-verified? p))
+          'redirect_host (o:pending-info-redirect-host p)
+          'redirect_host_differs (o:pending-info-redirect-host-differs? p)
+          'scopes (for/list ([s (in-list (o:pending-info-scopes p))])
+                    (hasheq 'name (car s) 'description (cond [(assoc (car s) descriptions) => cdr] [else ""])
+                            'requested (cdr s)))))
+
+;; GrantInfo -> JSExpr
+;; a connected app
+(define (grant-info->jsexpr g)
+  (hasheq 'id (o:grant-info-id g)
+          'client (oauth-client->jsexpr (o:grant-info-client-name g) (o:grant-info-client-host g)
+                                        (o:grant-info-client-uri g) (o:grant-info-verified? g))
+          'scopes (o:grant-info-scopes g)
+          'created_at (epoch->iso (o:grant-info-created g))
+          'last_used_at (let ([t (o:grant-info-last-used g)]) (if t (epoch->iso t) 'null))
+          'needs_reconnect (not (o:grant-info-current? g))))
+
 (module+ test
   (require rackunit racket/runtime-path)
   (define-runtime-path fixtures "../../docs/api-fixtures")
@@ -351,4 +389,21 @@
                           (run-result 13 4 8 "Is (random 10) pure?" "single" "2026-11-15T10:40:00.000Z" "2026-11-15T10:43:00.000Z"
                                       24 30 9.5 1
                                       (list (option-count 104 0 "yes" 3) (option-count 105 1 "no" 21))))))
-                  (fixture "results.json"))))
+                  (fixture "results.json"))
+    (define scopes '(("decks" . "Read and edit your decks, polls and deck settings")
+                     ("results" . "Read aggregate poll results of your decks")))
+    (check-equal? (pending-info->jsexpr
+                   (o:pending-info "Zm9vYmFyYmF6cXV4cXV1eGNvcmdlZ3JhdWx0Z2FycGx" "Example Agent" "agent.example"
+                                   "https://agent.example" #t "agent.example" #f '(("decks" . #t) ("results" . #f)))
+                   scopes)
+                  (fixture "oauth-request.json"))
+    (check-equal? (list (grant-info->jsexpr
+                         (o:grant-info "q1w2e3r4t5y6u7i8o9p0aa" "Example Agent" "agent.example" "https://agent.example" #t
+                                       '("decks" "results") 1794736800 1794737100 #t)))
+                  (fixture "oauth-grants.json")))
+  (test-case "unverified clients and stale grants encode nulls and needs_reconnect"
+    (define g (grant-info->jsexpr (o:grant-info "g" "App" #f #f #f '("decks") 0 #f #f)))
+    (check-equal? (hash-ref g 'client) (hasheq 'name "App" 'host 'null 'uri 'null 'verified #f))
+    (check-equal? (hash-ref g 'created_at) "1970-01-01T00:00:00.000Z")
+    (check-equal? (hash-ref g 'last_used_at) 'null)
+    (check-true (hash-ref g 'needs_reconnect))))

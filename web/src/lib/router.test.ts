@@ -17,6 +17,15 @@ describe("router.match", () => {
     expect(match(`/sessions/${code}`)).toEqual({ name: "session-live", code });
     expect(match(`/sessions/${code}/results`)).toEqual({ name: "session-results", code });
   });
+  it("matches the OAuth pages", () => {
+    const id = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    expect(match(`/connect/${id}`)).toEqual({ name: "connect", id });
+    expect(match("/connect/short").name).toBe("not-found");
+    expect(match(`/connect/${id}/x`).name).toBe("not-found");
+    expect(match("/connect").name).toBe("not-found");
+    expect(match("/connected-apps")).toEqual({ name: "connected-apps" });
+    expect(match("/connected-apps/x").name).toBe("not-found");
+  });
   it("serves /account through core's own extension", () => {
     expect(match("/account", ext.routes)).toEqual({ name: "ext", i: 0, params: {} });
   });

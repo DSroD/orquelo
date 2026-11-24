@@ -37,6 +37,14 @@ Every request needs `Authorization: Bearer <access token>`. A request that carri
   within 24 hours is deleted, and registration answers 429 (with `Retry-After`) while 1000 such unused clients are
   stored. Registration, authorization and token requests are rate limited per address (an IPv6 address counts by
   its /64).
+- Metadata-document fetch: only port 443, no redirects, short timeouts, at most 5 KiB, and the connected peer's
+  address is checked before any byte is sent (loopback, private, link-local and other non-public ranges are refused).
+  At most one fetch per `client_id` is in flight and at most 8 run at once; a failed fetch is not retried for five
+  minutes.
+- Consent page: a metadata-document client is shown with its verified host, a registered one is labelled unverified;
+  both show the host the user will be sent back to. "Verified" covers the host only: the name and other metadata are
+  the client's own claims. The page is sent with `Content-Security-Policy: frame-ancestors 'none'` and
+  `Referrer-Policy: no-referrer`, and approve and deny replies with `Cache-Control: no-store`.
 - Flow: authorization code with PKCE `S256` only. The authorization response carries `iss` (RFC 9207).
 - Scopes: `decks` (read and edit decks, polls and settings) and `results` (read aggregate results). The consent page
   lets you narrow what the client asked for. A request without `scope` asks for all of them. Orquelo's per-deck access

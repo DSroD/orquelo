@@ -11,10 +11,13 @@
                                      #:observe-wait (-> real? any)
                                      #:on-timeout (-> any))
                           connection?)]
-          [struct (exn:fail:pool-timeout exn:fail) ([message string?] [continuation-marks continuation-mark-set?])]))
+          [exn:fail:pool-timeout? (-> any/c boolean?)]))
 
 ;; An exn:fail:pool-timeout is raised when no pooled connection became free within the wait.
 (struct exn:fail:pool-timeout exn:fail ())
+
+;; tests of other modules build the exception to exercise their handling of it
+(module+ for-test (provide (struct-out exn:fail:pool-timeout)))
 
 ;; A DbUrl is a (db-url String (or String #f) String Natural String)
 ;; interp. the user, password (#f when absent), host, port and database name of a database URL.

@@ -72,7 +72,7 @@ the offending `field`.
 | Tool | Scope | Access to the deck | What it does |
 |---|---|---|---|
 | `list_decks` | decks | view | your decks (`archived` optional), with `qa_enabled` and your access |
-| `get_deck` | decks | view | page count, `qa_enabled`, `disabled` when the deck was switched off, and a flat list of polls, each with its `slide` (null: none); no sessions or codes |
+| `get_deck` | decks | view | page count, `qa_enabled`, `disabled: true` when the deck was switched off (only its owner can still read it; anyone else gets `deck_disabled`), and a flat list of polls, each with its `slide` (null: none); no sessions or codes |
 | `create_poll` | decks | edit | `deck_id`, `slide` (number or null), `question`, `kind` (`single`/`multi`), `options` (2 to 30, each `label` and optional `exclusive`), optional `show_results`, `allow_additional_answers` |
 | `replace_poll` | decks | edit | the same fields with `poll_id`; `poll_has_runs` once the poll was opened: duplicate it instead |
 | `delete_poll` | decks | edit | `poll_id`; `poll_has_runs` once opened |

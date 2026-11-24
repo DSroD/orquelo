@@ -70,8 +70,9 @@
 
 ;; FieldType -> FieldType
 ;; the type, but the field may be left out or null, and then reads as #f; the schema has no default
+;; and advertises null
 (define (optional-type t)
-  (field-type (field-type-schema t)
+  (field-type (hasheq 'anyOf (list (field-type-schema t) (hasheq 'type "null")))
               (λ (v path) (if (unset? v) #f ((field-type-parse t) v path)))
               #f))
 
@@ -92,6 +93,7 @@
               #t))
 
 ;; Integer Integer Integer -> FieldType
+;; an integer in lo..hi that may be left out or null, and then reads as the default
 (define (optional-integer-type lo hi default)
   (unless (<= lo default hi) (raise-argument-error 'optional-integer-type "a default within the bounds" default))
   (define t (integer-type lo hi))
@@ -224,7 +226,8 @@
     (check-exn #rx"integer" (λ () (parse-arguments maybe (hasheq 'n 9))))
     (check-equal? (field-type-schema maybe)
                   (hasheq 'type "object" 'additionalProperties #f
-                          'properties (hasheq 'n (hasheq 'type "integer" 'minimum 1 'maximum 5))))
+                          'properties (hasheq 'n (hasheq 'anyOf (list (hasheq 'type "integer" 'minimum 1 'maximum 5)
+                                                                       (hasheq 'type "null"))))))
     (check-exn #rx"integer" (λ () (parse-arguments opt (hasheq 'n 9))))
     (check-equal? (field-type-schema (object-type list (list (list 'n (optional-integer-type 0 5 0)))))
                   (hasheq 'type "object" 'additionalProperties #f

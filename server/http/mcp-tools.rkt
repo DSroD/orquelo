@@ -7,8 +7,7 @@
          "deck-ops.rkt" "deps.rkt" "json.rkt" "lookup.rkt")
 (provide (contract-out
           [struct mcp-ctx ([deps deps?] [user user?])]
-          [mcp-tools (listof tool?)]
-          [mcp-results->jsexpr (-> session-results? jsexpr?)]))
+          [mcp-tools (listof tool?)]))
 
 ;; An McpCtx is an (mcp-ctx Deps User): what every tool call gets, the user being the authenticated one
 (struct mcp-ctx (deps user))
@@ -25,8 +24,16 @@
 (struct poll-in (id draft))
 
 ;; Id (or Natural #f) String Kind (Listof OptionDraft) Boolean Boolean -> PollIn
+;; the arguments of create_poll and replace_poll, the content validated as a PollDraft
 (define (poll-args id slide question kind options show-results? allow-additional?)
   (poll-in id (make-poll-draft slide question kind options show-results? allow-additional?)))
+
+;; A ShowIn is a (show-in Id Boolean): the poll and whether opening it shows its results
+(struct show-in (poll-id show?))
+;; A TitleIn is a (title-in Id String): the deck and its new title
+(struct title-in (deck-id title))
+;; A QaIn is a (qa-in Id Boolean): the deck and whether Q&A is available
+(struct qa-in (deck-id enabled?))
 
 ;; ------------------------------------------------------------------ reading
 
@@ -37,20 +44,16 @@
   #:args [archived? (values [archived (optional-boolean #f)])]
   (match-define (mcp-ctx d me) ctx)
   (define listings (list-presentations (deps-db d) (user-id me) archived?))
-  (define qa (decks-qa-enabled (deps-db d) (map listing-id listings)))
-  (hasheq 'decks (for/list ([l (in-list listings)])
-                   (presentation-listing->jsexpr l (hash-ref qa (listing-id l) #f)))))
+  (mcp-deck-list->jsexpr listings (decks-qa-enabled (deps-db d) (map listing-id listings))))
 
 (define-tool (get-deck ctx)
   #:title "Get a deck"
-  #:description "Shows one deck: title, page_count (slides are numbered 1..page_count), qa_enabled, your access, and a flat list of its polls. Each poll has an id, the slide it is attached to (null = none), question, kind (single or multi), its options and has_runs (a poll that was ever opened cannot be replaced, only duplicated). disabled is true when the deck's edition has switched it off. Live sessions and their join codes are not shown."
+  #:description "Shows one deck: title, page_count (slides are numbered 1..page_count), qa_enabled, your access, and a flat list of its polls. Each poll has an id, the slide it is attached to (null = none), question, kind (single or multi), its options and has_runs (a poll that was ever opened cannot be replaced, only duplicated). disabled is true when the deck's edition has switched it off (only its owner can still read it). Live sessions and their join codes are not shown."
   #:scope "decks" #:read-only
   #:args [id (values [deck-id (integer 1 max-id)])]
   (match-define (mcp-ctx d me) ctx)
   (define dk (need-deck d me id 'view))
-  (define result
-    (hash-set (deck->jsexpr dk (deck-qa-enabled? (deps-db d) id)) 'polls (map poll->jsexpr (list-polls (deps-db d) id))))
-  (if ((current-deck-disabled?) (deps-db d) id) (hash-set result 'disabled #t) result))
+  (mcp-deck->jsexpr dk (deck-qa-enabled? (deps-db d) id) (list-polls (deps-db d) id) ((current-deck-disabled?) (deps-db d) id)))
 
 ;; ------------------------------------------------------------------ editing
 
@@ -60,9 +63,9 @@
   #:scope "decks"
   #:args [in (poll-args [deck-id (integer 1 max-id)]
                       [slide (nullable (integer 1 100000))]
-                      [question (string 1 500)]
+                      [question (string 1 max-question-length)]
                       [kind (one-of "single" "multi")]
-                      [options (array (object make-option-draft [label (string 1 200)] [exclusive (optional-boolean #f)]) 2 30)]
+                      [options (array (object make-option-draft [label (string 1 max-label-length)] [exclusive (optional-boolean #f)]) min-options max-options)]
                       [show-results (optional-boolean #f)]
                       [allow-additional-answers (optional-boolean #f)])]
   (poll->jsexpr (op-create-poll (mcp-ctx-deps ctx) (mcp-ctx-user ctx) (poll-in-id in) (poll-in-draft in))))
@@ -73,9 +76,9 @@
   #:scope "decks" #:destructive #:idempotent
   #:args [in (poll-args [poll-id (integer 1 max-id)]
                       [slide (nullable (integer 1 100000))]
-                      [question (string 1 500)]
+                      [question (string 1 max-question-length)]
                       [kind (one-of "single" "multi")]
-                      [options (array (object make-option-draft [label (string 1 200)] [exclusive (optional-boolean #f)]) 2 30)]
+                      [options (array (object make-option-draft [label (string 1 max-label-length)] [exclusive (optional-boolean #f)]) min-options max-options)]
                       [show-results (optional-boolean #f)]
                       [allow-additional-answers (optional-boolean #f)])]
   (poll->jsexpr (op-replace-poll (mcp-ctx-deps ctx) (mcp-ctx-user ctx) (poll-in-id in) (poll-in-draft in))))
@@ -86,7 +89,7 @@
   #:scope "decks" #:destructive
   #:args [id (values [poll-id (integer 1 max-id)])]
   (op-delete-poll (mcp-ctx-deps ctx) (mcp-ctx-user ctx) id)
-  (hasheq 'deleted #t 'poll_id id))
+  (mcp-poll-deleted->jsexpr id))
 
 (define-tool (duplicate-poll ctx)
   #:title "Duplicate a poll"
@@ -99,48 +102,29 @@
   #:title "Show results when a poll opens"
   #:description "Sets whether opening the poll shows its results on the screen right away. Allowed even when the poll has runs. Returns the poll."
   #:scope "decks" #:idempotent
-  #:args [in (cons [poll-id (integer 1 max-id)] [show-results (boolean)])]
-  (poll->jsexpr (op-set-show-results (mcp-ctx-deps ctx) (mcp-ctx-user ctx) (car in) (cdr in))))
+  #:args [in (show-in [poll-id (integer 1 max-id)] [show-results (boolean)])]
+  (match-define (show-in pid show?) in)
+  (poll->jsexpr (op-set-show-results (mcp-ctx-deps ctx) (mcp-ctx-user ctx) pid show?)))
 
 (define-tool (rename-deck ctx)
   #:title "Rename a deck"
   #:description "Changes the title of a deck."
   #:scope "decks" #:idempotent
-  #:args [in (cons [deck-id (integer 1 max-id)] [title (string 1 200)])]
-  (op-rename-deck (mcp-ctx-deps ctx) (mcp-ctx-user ctx) (car in) (cdr in))
-  (hasheq 'id (car in) 'title (cdr in)))
+  #:args [in (title-in [deck-id (integer 1 max-id)] [title (string 1 200)])]
+  (match-define (title-in id title) in)
+  (op-rename-deck (mcp-ctx-deps ctx) (mcp-ctx-user ctx) id title)
+  (mcp-deck-renamed->jsexpr id title))
 
 (define-tool (set-qa-enabled ctx)
   #:title "Enable or disable Q&A"
   #:description "Sets whether audience Q&A is available in future sessions of the deck."
   #:scope "decks" #:idempotent
-  #:args [in (cons [deck-id (integer 1 max-id)] [enabled (boolean)])]
-  (op-set-qa-enabled (mcp-ctx-deps ctx) (mcp-ctx-user ctx) (car in) (cdr in))
-  (hasheq 'id (car in) 'qa_enabled (cdr in)))
+  #:args [in (qa-in [deck-id (integer 1 max-id)] [enabled (boolean)])]
+  (match-define (qa-in id enabled?) in)
+  (op-set-qa-enabled (mcp-ctx-deps ctx) (mcp-ctx-user ctx) id enabled?)
+  (mcp-qa-set->jsexpr id enabled?))
 
 ;; ------------------------------------------------------------------ results
-
-;; Session -> JSObject
-;; a session as list_sessions shows it; never its join codes
-(define (session->jsexpr s)
-  (hasheq 'session_id (session-id s) 'label (session-label s) 'started_at (session-started-at s)
-          'ended_at (or (session-ended-at s) 'null)))
-
-;; SessionResults -> JSObject
-;; one session as aggregates: label, times and, per poll run, the count of every option and the voters.
-;; The join codes, the votes and the Q&A are left out
-(define (mcp-results->jsexpr sr)
-  (match-define (session-results s _ t runs) sr)
-  (hash-set* (session->jsexpr s) 'unique_voters (results-totals-unique-voters t) 'runs (map run->jsexpr runs)))
-
-;; RunResult -> JSObject
-;; one poll run: its question, times, number of voters and the count of every option
-(define (run->jsexpr r)
-  (hasheq 'run_id (run-result-run-id r) 'poll_id (run-result-poll-id r) 'slide (or (run-result-slide r) 'null)
-          'question (run-result-question r) 'kind (run-result-kind r)
-          'opened_at (run-result-opened-at r) 'closed_at (or (run-result-closed-at r) 'null)
-          'total_voters (run-result-total-voters r)
-          'options (for/list ([o (run-result-options r)]) (hasheq 'label (option-count-label o) 'count (option-count-count o)))))
 
 (define-tool (list-sessions ctx)
   #:title "List sessions"
@@ -149,7 +133,7 @@
   #:args [id (values [deck-id (integer 1 max-id)])]
   (match-define (mcp-ctx d me) ctx)
   (need-deck d me id 'results)
-  (hasheq 'deck_id id 'sessions (map session->jsexpr (sessions-of-deck (deps-db d) id))))
+  (mcp-sessions->jsexpr id (sessions-of-deck (deps-db d) id)))
 
 ;; A ResultsIn is a (results-in Id (or Id #f) Natural): the deck, one session of it if asked, the most sessions to show
 (struct results-in (deck session limit))
@@ -167,9 +151,8 @@
   (define chosen
     (cond [wanted (list (or (findf (λ (s) (= (session-id s) wanted)) all) (not-found! "session not found")))]
           [else (take-up-to all (results-in-limit in))]))
-  (hasheq 'deck_id (presentation-id p) 'title (presentation-title p)
-          'total_sessions (length all) 'truncated (and (not wanted) (< (length chosen) (length all)))
-          'sessions (for/list ([s chosen]) (mcp-results->jsexpr (session-results-of d s p)))))
+  (mcp-results->jsexpr p (length all) (and (not wanted) (< (length chosen) (length all)))
+                       (for/list ([s chosen]) (session-results-of d s p))))
 
 ;; (Listof X) Natural -> (Listof X)
 ;; the first n items, or all when there are fewer

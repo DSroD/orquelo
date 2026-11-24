@@ -1,8 +1,9 @@
 #lang racket/base
 ;; Deck and poll operations shared by the REST handlers and other front ends (MCP tools).
 ;; Each does its own lookup and access check, mutates, and returns domain structs, or raises
-;; exn:api (404/403/409/422). make-poll-draft may also raise exn:domain; callers map it.
-;; Callers may validate before calling an op (no leak: validation never inspects the resource).
+;; exn:api (404/403/409/422). jsexpr->poll-draft and make-poll-draft may also raise exn:domain; callers map it.
+;; Poll ops take a PollDraft the caller built from its request first (no leak: building it never inspects
+;; the resource); only the slide's range needs the deck, so the ops check that.
 (require racket/contract/base racket/match
          "../db/qa.rkt" "../db/repo.rkt" "../domain.rkt"
          "deps.rkt" "json.rkt" "lookup.rkt" "validate.rkt")
@@ -24,9 +25,18 @@
 ;; the poll in a request body, shared by create and replace. Content rules are the PollDraft guard's
 ;; (exn:domain); the slide's range needs the deck, so the ops check it (check-draft-slide!)
 (define (jsexpr->poll-draft h)
-  (make-poll-draft (match (hash-ref h 'slide 'null) ['null #f] [v v]) (hash-ref h 'question #f)
+  (make-poll-draft (body-draft-slide h) (hash-ref h 'question #f)
                    (hash-ref h 'kind #f) (jsexpr->option-drafts h)
                    (body-bool-or-default h 'show_results #f) (body-bool-or-default h 'allow_additional_answers #f)))
+
+;; JSObject -> Any
+;; the body's slide: absent or null is #f (no slide); JSON false is not a slide, so 422 rather than "none";
+;; anything else is left to the draft's guard
+(define (body-draft-slide h)
+  (match (hash-ref h 'slide 'null)
+    ['null #f]
+    [#f (invalid! 'slide "slide must be null or an integer")]
+    [v v]))
 
 ;; PollDraft Natural -> Void
 ;; 422 naming `slide` unless the draft's slide is none or within the deck's 1..page-count
@@ -37,7 +47,7 @@
 ;; parses option objects into trusted answer definitions
 (define (jsexpr->option-drafts h)
   (define raw (hash-ref h 'options #f))
-  (unless (list? raw) (invalid! 'options "options must have 2 to 30 items"))
+  (unless (list? raw) (invalid! 'options (format "options must have ~a to ~a items" min-options max-options)))
   (for/list ([o raw])
     (unless (hash? o) (invalid! 'options "each option must be an object"))
     (make-option-draft (hash-ref o 'label #f) (body-bool-or-default o 'exclusive #f))))
@@ -110,7 +120,9 @@
     (check-equal? (field-of (λ () (jsexpr->poll-draft (hash-remove ok 'options)))) "options")
     (check-equal? (field-of (λ () (jsexpr->poll-draft (hash-set ok 'options '("a" "b"))))) "options")
     (check-exn exn:domain? (λ () (jsexpr->poll-draft (hash-set ok 'kind "bogus"))))
-    (check-exn exn:domain? (λ () (jsexpr->poll-draft (hash-set ok 'slide "x")))))
+    (check-exn exn:domain? (λ () (jsexpr->poll-draft (hash-set ok 'slide "x"))))
+    (check-equal? (field-of (λ () (jsexpr->poll-draft (hash-set ok 'slide #f)))) "slide")
+    (check-false (poll-draft-slide (jsexpr->poll-draft (hash-set ok 'slide 'null)))))
   (test-case "the slide must be within the deck's pages"
     (define draft (jsexpr->poll-draft ok))
     (check-false (field-of (λ () (check-draft-slide! draft 3))))

@@ -93,7 +93,14 @@
                 #:when (let ([k (tool-name-of id)]) (begin0 (hash-ref seen k #f) (hash-set! seen k #t))))
       id))
 
-;; Syntax Syntax Syntax (Any -> (or Real #f)) -> (or Syntax #f)
+  ;; Syntax -> Boolean
+  ;; is the field spec a boolean or one with a default (optional-string, optional-integer, optional-boolean, optional)?
+  (define (defaulted-spec? stx)
+    (syntax-parse stx
+      [((~or (~datum boolean) (~datum optional-boolean) (~datum optional-string) (~datum optional-integer) (~datum optional)) . _) #t]
+      [_ #f]))
+
+  ;; Syntax Syntax Syntax (Any -> (or Real #f)) -> (or Syntax #f)
   ;; the default when its measure (a number, or #f when it is not literal) is outside literal bounds
   (define (default-outside lo hi d measure)
     (define l (syntax-e lo))
@@ -125,7 +132,10 @@
              #:fail-when (reversed-range #'lo #'hi) "lower bound exceeds upper bound"
              #:fail-when (default-outside #'lo #'hi #'d (λ (v) (and (real? v) v))) "default outside the bounds"
              #:with expr #'(optional-integer-type lo hi d))
-    (pattern ((~datum optional) t:field-spec) #:with expr #'(optional-type t.expr))
+    (pattern ((~datum optional) t:field-spec)
+             #:fail-when (and (defaulted-spec? #'t) #'t)
+             "optional wraps a type without a default: a boolean or optional-* type already reads as its default"
+             #:with expr #'(optional-type t.expr))
     (pattern ((~datum boolean)) #:with expr #'(boolean-type))
     (pattern ((~datum optional-boolean) d:expr) #:with expr #'(optional-boolean-type d))
     (pattern ((~datum one-of) s:str ...+) #:with expr #'(one-of-type s ...))
@@ -261,6 +271,16 @@
                      (define-tool (t ctx) #:description "d" #:args [in (c [a (optional-string 1 2 "")])] in))
     (expansion-error #rx"field type"
                      (define-tool (t ctx) #:description "d" #:args [in (c [a (optional (bogus))])] in))
+    (expansion-error #rx"optional wraps"
+                     (define-tool (t ctx) #:description "d" #:args [in (c [a (optional (boolean))])] in))
+    (expansion-error #rx"optional wraps"
+                     (define-tool (t ctx) #:description "d" #:args [in (c [a (optional (optional-boolean #f))])] in))
+    (expansion-error #rx"optional wraps"
+                     (define-tool (t ctx) #:description "d" #:args [in (c [a (optional (optional-integer 1 5 2))])] in))
+    (expansion-error #rx"optional wraps"
+                     (define-tool (t ctx) #:description "d" #:args [in (c [a (optional (optional-string 1 2 "a"))])] in))
+    (expansion-error #rx"optional wraps"
+                     (define-tool (t ctx) #:description "d" #:args [in (c [a (optional (optional (integer 1 5)))])] in))
     (expansion-error #rx"lower bound exceeds"
                      (define-tool (t ctx) #:description "d" #:args [in (c [a (string 5 1)])] in))
     (expansion-error #rx"lower bound exceeds"
@@ -286,7 +306,8 @@
     (define-tool (opt ctx) #:description "d"
       #:args [in (c [a (optional (integer 1 5))] [b (optional-integer 1 5 2)])] (hasheq 'v (format "~a" in)))
     (check-equal? (hash-ref (tool-result-content ((tool-handler opt) 'me (hasheq 'a 'null 'b 'null))) 'v) "#(struct:c #f 2)")
-    (check-false (hash-has-key? (hash-ref (hash-ref (tool-input-schema opt) 'properties) 'a) 'default))
+    (check-equal? (hash-ref (hash-ref (tool-input-schema opt) 'properties) 'a)
+                  (hasheq 'anyOf (list (hasheq 'type "integer" 'minimum 1 'maximum 5) (hasheq 'type "null"))))
     (check-equal? (hash-ref (tool-input-schema opt) 'additionalProperties) #f))
   (test-case "dots and digits are valid in tool names"
     (check-equal? (tool-name (let () (define-tool (get-deck.v2 ctx) #:description "d" (hasheq)) get-deck.v2))

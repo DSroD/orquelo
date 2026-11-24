@@ -94,10 +94,4 @@ export class McpClient {
     expect(result.isError).toBeFalsy();
     return result.structuredContent;
   }
-
-  async listTools(): Promise<string[]> {
-    const r = await this.rpc("tools/list");
-    expect(r.status).toBe(200);
-    return (await r.json()).result.tools.map((t: { name: string }) => t.name);
-  }
 }

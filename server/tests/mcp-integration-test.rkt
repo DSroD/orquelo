@@ -168,6 +168,9 @@
     (define bad-slide (tool token "create_poll" (poll-args deck 99)))
     (check-equal? (error-of bad-slide) "invalid_argument")
     (check-equal? (hash-ref (structured bad-slide) 'field) "slide")
+    (define false-slide (tool token "create_poll" (poll-args deck #f)))
+    (check-equal? (error-of false-slide) "invalid_argument")
+    (check-equal? (hash-ref (structured false-slide) 'field) "slide")
     (define bad-kind (tool token "create_poll" (hash-set (poll-args deck 1) 'kind "some")))
     (check-equal? (error-of bad-kind) "invalid_argument")
     (check-equal? (hash-ref (structured bad-kind) 'field) "kind")
@@ -221,6 +224,33 @@
     (check-equal? (error-of (tool token "replace_poll" (replace-args poll-id 2))) "poll_has_runs")
     (check-equal? (error-of (tool token "delete_poll" (hasheq 'poll_id poll-id))) "poll_has_runs")
     (check-false (hash-ref (structured (tool token "duplicate_poll" (hasheq 'poll_id poll-id))) 'has_runs)))
+
+  (test-case "polls of another user's deck are not found, whatever the tool"
+    (define eve-token (tokens-access (oauth-connect! (user! "eve@example.org") '("decks" "results"))))
+    (check-equal? (error-of (tool eve-token "replace_poll" (replace-args poll-id 2))) "not_found")
+    (check-equal? (error-of (tool eve-token "delete_poll" (hasheq 'poll_id poll-id))) "not_found")
+    (check-equal? (error-of (tool eve-token "duplicate_poll" (hasheq 'poll_id poll-id))) "not_found")
+    (check-equal? (error-of (tool eve-token "set_poll_show_results" (hasheq 'poll_id poll-id 'show_results #t))) "not_found"))
+
+  (test-case "a session of another deck is not found through this deck"
+    (define other (hash-ref (resp-json (upload! "Other" "2" pdf #:cookie cookie)) 'id))
+    (define foreign (hash-ref (session! "Elsewhere" other) 'id))
+    (check-equal? (error-of (tool token "get_results" (hasheq 'deck_id deck 'session_id foreign))) "not_found")
+    (check-false (hash-ref (tool token "get_results" (hasheq 'deck_id other 'session_id foreign)) 'isError)))
+
+  (test-case "an edit-only collaborator cannot list sessions"
+    (define carol-token (tokens-access (oauth-connect! (user! "carol@example.org") '("decks" "results"))))
+    (check-equal? (error-of (tool carol-token "list_sessions" (hasheq 'deck_id deck))) "forbidden"))
+
+  (test-case "list_decks lists archived decks only when asked"
+    (define old (hash-ref (resp-json (upload! "Old" "2" pdf #:cookie cookie)) 'id))
+    (check-equal? (resp-status (http "POST" (format "/api/decks/~a/archive" old) #:cookies (list cookie))) 200)
+    (define (ids archived)
+      (map (λ (d) (hash-ref d 'id)) (hash-ref (structured (tool token "list_decks" archived)) 'decks)))
+    (check-not-false (member old (ids (hasheq 'archived #t))))
+    (check-false (member deck (ids (hasheq 'archived #t))))
+    (check-false (member old (ids (hasheq))))
+    (check-not-false (member deck (ids (hasheq 'archived #f)))))
 
   (test-case "get_results: per-run aggregates, never codes"
     (define r (tool token "get_results" (hasheq 'deck_id deck)))

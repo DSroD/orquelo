@@ -5,7 +5,7 @@
          "data.rkt" "uri.rkt" "base64url.rkt" "clean.rkt")
 (provide (contract-out
           [register (->* (any/c real?) (#:new-id (-> string?)) (or/c client? oauth-error?))]
-          [client->registration-jsexpr (-> client? real? any/c)]))
+          [allowed-grant-types (listof string?)]))
 
 (define max-redirect-uris 20)
 (define allowed-grant-types '("authorization_code" "refresh_token"))
@@ -41,17 +41,6 @@
 (define (grant-types-ok? v)
   (and (list? v) (pair? v) (andmap (λ (g) (member g allowed-grant-types)) v) (not (check-duplicates v))))
 
-;; Client Real -> JSExpr
-;; the RFC 7591 response for a freshly registered client; it echoes the grant types granted
-(define (client->registration-jsexpr c now)
-  (hasheq 'client_id (client-id c)
-          'client_id_issued_at (inexact->exact (floor now))
-          'client_name (client-name c)
-          'redirect_uris (client-redirect-uris c)
-          'token_endpoint_auth_method "none"
-          'grant_types (if (client-refresh? c) allowed-grant-types '("authorization_code"))
-          'response_types '("code")))
-
 (module+ test
   (require rackunit)
   (define (ok . kvs) (apply hasheq 'redirect_uris '("https://app.example/cb") kvs))
@@ -63,7 +52,6 @@
     (check-equal? (client-kind c) 'registered)
     (check-equal? (client-name c) "Unnamed application")
     (check-false (client-refresh? c) "the default grant type is authorization_code alone")
-    (check-equal? (hash-ref (client->registration-jsexpr c 50) 'grant_types) '("authorization_code"))
     (check-false (client-expires c))
     (check-equal? (client-created c) 50))
   (test-case "name and URI are kept when sane"
@@ -73,7 +61,7 @@
                         0))
     (check-equal? (client-name c) "My App")
     (check-true (client-refresh? c))
-    (check-equal? (hash-ref (client->registration-jsexpr c 0) 'grant_types) '("authorization_code" "refresh_token"))
+    (check-true (client-refresh? c))
     (check-equal? (client-uri c) "https://app.example"))
   (test-case "refusals"
     (check-equal? (code-of (register '(1) 0)) "invalid_client_metadata")
@@ -88,9 +76,4 @@
     (check-equal? (code-of (register (ok 'grant_types '("implicit")) 0)) "invalid_client_metadata")
     (check-equal? (code-of (register (ok 'grant_types '()) 0)) "invalid_client_metadata")
     (check-equal? (code-of (register (ok 'response_types '("token")) 0)) "invalid_client_metadata")
-    (check-equal? (code-of (register (ok 'client_name 5) 0)) "invalid_client_metadata"))
-  (test-case "the response never has a secret"
-    (define j (client->registration-jsexpr (register (ok) 7) 7))
-    (check-equal? (hash-ref j 'token_endpoint_auth_method) "none")
-    (check-equal? (hash-ref j 'client_id_issued_at) 7)
-    (check-false (hash-has-key? j 'client_secret))))
+    (check-equal? (code-of (register (ok 'client_name 5) 0)) "invalid_client_metadata")))

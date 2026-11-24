@@ -2,7 +2,8 @@
 ;; The MCP endpoint (POST /mcp): the generic MCP server over Orquelo's tools, behind the OAuth bearer
 ;; token of the built-in authorization server. Part of core; it exists only when OAuth does.
 (require racket/contract/base racket/match web-server/http
-         (only-in "../mcp/main.rkt" make-mcp-server make-streamable-handler mcp-principal tool-error)
+         (only-in "../mcp/main.rkt" make-mcp-server make-streamable-handler mcp-principal tool-error tool tool-name tool-handler
+                  exn:mcp:invalid-argument?)
          (prefix-in o: "../oauth/main.rkt")
          "../config.rkt" "../db/accounts.rkt" "../db/conn.rkt" "../domain.rkt" "../domain/parse.rkt"
          "deps.rkt" "json.rkt" "mcp-tools.rkt" "oauth-routes.rkt")
@@ -15,7 +16,8 @@
   (string-append
    "Orquelo runs live polls for PDF lectures. These tools prepare decks: list_decks and get_deck show what exists "
    "(slides are numbered from 1), create_poll, replace_poll, delete_poll and duplicate_poll manage polls, "
-   "set_poll_show_results, rename_deck and set_qa_enabled change settings, and get_results reads aggregate results. "
+   "set_poll_show_results, rename_deck and set_qa_enabled change settings, and list_sessions and get_results read "
+   "aggregate results (list_sessions finds the session_id to pass to get_results). "
    "A poll that was ever opened in a session has runs and cannot be replaced or deleted: duplicate it and edit the "
    "copy. Starting sessions, opening polls and uploading PDFs are done by the presenter in the web app, not here. "
    "Failed calls return {error, message, field?}; fix the named field and retry."))
@@ -27,11 +29,24 @@
   (define srv (oauth-routes-server routes))
   (define base (config-public-base-url (deps-cfg d)))
   (make-streamable-handler
-   (make-mcp-server "orquelo" "1" mcp-tools #:instructions instructions #:tool-failure tool-failure)
+   (make-mcp-server "orquelo" "1" (map logging-failures mcp-tools) #:instructions instructions #:tool-failure tool-failure)
    #:authenticate (λ (req) (authenticate d srv req))
    #:allowed-origin? (λ (origin) (equal? origin base))
    #:insufficient-scope (λ (scope) (o:insufficient-scope-challenge srv scope))
    #:on-failure on-failure))
+
+;; Tool -> Tool
+;; the tool, but an exception nobody answers (neither bad arguments, a tool error nor a 503) is logged with the tool's
+;; name and the user's id first, then raised on
+(define (logging-failures t)
+  (struct-copy tool t
+               [handler (λ (ctx args)
+                          (with-handlers ([(λ (e) (and (exn:fail? e) (not (exn:mcp:invalid-argument? e)) (not (tool-failure e)) (not (on-failure e))))
+                                           (λ (e)
+                                             (log-error "mcp tool ~a failed for user ~a: ~a"
+                                                        (tool-name t) (user-id (mcp-ctx-user ctx)) (exn-message e))
+                                             (raise e))])
+                            ((tool-handler t) ctx args)))]))
 
 ;; Deps OAuthServer Request -> (or McpPrincipal Response)
 ;; the caller a valid bearer token speaks for, as the tools' context; 401 when the token is not valid
@@ -69,7 +84,7 @@
 (define (on-failure e) (and (exn:fail:pool-timeout? e) (busy-response)))
 
 (module+ test
-  (require rackunit "../mcp/main.rkt")
+  (require rackunit "../mcp/main.rkt" (submod "../db/conn.rkt" for-test))
   (define (content e) (tool-result-content (tool-failure e)))
   (define marks (current-continuation-marks))
   (test-case "API errors keep the REST shape; invalid is invalid_argument"

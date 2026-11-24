@@ -28,7 +28,7 @@ quality and idiom matter as much as behaviour.
   Neither library imports Orquelo code
 - `web/`: Svelte 5 + Vite SPA. `web/src/lib/types.ts` mirrors the API contract
 - `e2e/`: Playwright user stories (`stories/*.spec.ts`) over helpers in `e2e/support` (actors: `Presenter`,
-  `Projector`, `Student`). Specs import `test`/`expect` only from `../support`
+  `Projector`, `Student`, `McpClient`). Specs import `test`/`expect` only from `../support`
 - `docs/api.md` + `docs/api-fixtures/`: **the API contract and source of truth**.
   The backend's JSON must equal the fixtures, and the frontend tests parse them
 - `docs/accounts.md`: password accounts (`user` CLI, throttling, sessions)

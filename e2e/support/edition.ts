@@ -4,6 +4,8 @@ import { passwordLogin } from "./login";
 
 // How a lecturer signs in on this edition.
 export interface Login {
+  // Signs in. When the page is already on the login page (a redirect brought it there with return_to),
+  // stay on it and keep return_to: do not navigate away first.
   submit(page: Page, email: string, password: string): Promise<void>;
   expectPage(page: Page): Promise<void>;
   expectError(page: Page, text: string | RegExp): Promise<void>;

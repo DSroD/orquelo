@@ -16,7 +16,7 @@
 (require racket/contract/base racket/match racket/list racket/string json net/uri-codec net/url
          web-server/http
          "data.rkt" "store.rkt" "token-format.rkt" "base64url.rkt" "pkce.rkt" "uri.rkt" "cimd.rkt"
-         "dcr.rkt" "metadata.rkt")
+         "dcr.rkt" "metadata.rkt" "json.rkt")
 (provide (contract-out
           [oauth-server? (-> any/c boolean?)]
           [make-oauth-server (-> oauth-app? oauth-store? token-format? oauth-server?)]
@@ -85,7 +85,7 @@
 ;; the RFC 6749 error reply
 (define (error-response e)
   (json-response (oauth-error-status e)
-                 (hasheq 'error (oauth-error-code e) 'error_description (oauth-error-description e))))
+                 (oauth-error->jsexpr e)))
 
 ;; Natural String -> Response
 ;; the page for an authorization request we cannot safely redirect back to; `message` is fixed text
@@ -404,7 +404,7 @@
                       (store-token-put! store (token-record refresh-hash (grant-id g) 'refresh scopes resource (+ now refresh-ttl)))))
        (invalid-grant!))
      (store-grant-touch! store (grant-id g) now)))
-  (token-response access-token refresh-token scopes))
+  (token-response->jsexpr access-token refresh-token scopes access-ttl))
 
 ;; OAuthServer Params -> JSExpr
 ;; refresh_token grant: a live refresh token is exchanged for a new pair (the old one is retired
@@ -436,7 +436,7 @@
              store (token-record-hash old) now (grant-id g)
              (list (token-record refresh-hash (grant-id g) 'refresh scopes resource (+ now refresh-ttl))
                    (token-record access-hash (grant-id g) 'access scopes resource (+ now access-ttl))))
-       [(? grant?) (token-response access-token refresh-token scopes)]
+       [(? grant?) (token-response->jsexpr access-token refresh-token scopes access-ttl)]
        [(reused gid) (revoke-grant! srv gid) (invalid-grant! "the refresh token was already used")]
        [#f (invalid-grant!)])]))
 
@@ -446,12 +446,6 @@
   (define fmt (oauth-server-format srv))
   (define token ((token-format-mint fmt)))
   (values token (hash-token (or ((token-format-key fmt) token) (error 'oauth "the token format mints tokens it cannot key")))))
-
-;; String (or String #f) (listof String) -> JSExpr
-(define (token-response access refresh scopes)
-  (define base (hasheq 'access_token access 'token_type "Bearer" 'expires_in access-ttl
-                       'scope (string-join scopes " ")))
-  (if refresh (hash-set base 'refresh_token refresh) base))
 
 ;; ---------------------------------------------------------------------------------------------
 ;; Registration endpoint
@@ -470,7 +464,7 @@
      (match (and doc (register doc now))
        [(? client? c)
         (store-client-put! (oauth-server-store srv) c)
-        (json-response 201 (client->registration-jsexpr c now))]
+        (json-response 201 (client->jsexpr c now))]
        [(? oauth-error? e) (error-response e)]
        [#f (error-response (oauth-error "invalid_client_metadata" "the body must be a JSON object of at most 16 KiB" 400))])]))
 

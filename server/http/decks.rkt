@@ -434,7 +434,7 @@
   (match result
     ['poll-not-open (api-error! 409 "poll_not_open" "this poll is not open")]
     ['not-allowed (api-error! 409 "additional_answers_disabled" "this poll does not allow additional answers")]
-    ['too-many (invalid! 'label "a poll may have at most 30 options")]
+    ['too-many (invalid! 'label (format "a poll may have at most ~a options" max-options))]
     ['invalid (invalid! 'exclusive "exclusive options require multiple choice")]
     [o
      (apply-event! d code (run-updated (get-run (db d) (run-option-input-run-id in))))

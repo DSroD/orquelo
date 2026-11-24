@@ -14,10 +14,10 @@
           [request-json (-> request? hash?)]
           [query-param (-> request? symbol? (or/c string? #f))]
           [me->jsexpr (-> user? limits? natural-number/c jsexpr?)]
-          [deck->jsexpr (-> deck? jsexpr?)]
+          [deck->jsexpr (-> deck? boolean? jsexpr?)]
           [share->jsexpr (-> share? jsexpr?)]
-          [presentation-listing->jsexpr (-> presentation-listing? jsexpr?)]
-          [presentation-detail->jsexpr (-> deck? (listof poll?) (listof session-view?) jsexpr?)]
+          [presentation-listing->jsexpr (-> presentation-listing? boolean? jsexpr?)]
+          [presentation-detail->jsexpr (-> deck? boolean? (listof poll?) (listof session-view?) jsexpr?)]
           [poll->jsexpr (-> poll? jsexpr?)]
           [option->jsexpr (-> option? jsexpr?)]
           [qa-question->jsexpr (-> qa-question? jsexpr?)]
@@ -106,16 +106,17 @@
                               'storage_quota (or-null (limits-storage-quota-bytes l))
                               'max_upload_bytes (limits-max-upload-bytes l))))
 
-;; Presentation -> JSExpr
-(define (presentation->jsexpr p)
+;; Presentation Boolean -> JSExpr
+;; qa? is the deck's Q&A setting, which the presentation row does not carry
+(define (presentation->jsexpr p qa?)
   (hasheq 'id (presentation-id p) 'title (presentation-title p) 'page_count (presentation-page-count p)
-          'qa_enabled #f 'created_at (presentation-created-at p) 'archived_at (or-null (presentation-archived-at p))))
+          'qa_enabled qa? 'created_at (presentation-created-at p) 'archived_at (or-null (presentation-archived-at p))))
 
-;; Deck -> JSExpr
+;; Deck Boolean -> JSExpr
 ;; the presentation with its owner and what the asking user may do with it
-(define (deck->jsexpr dk)
+(define (deck->jsexpr dk qa?)
   (match-define (access owner? _ edit? moderate? copy? results?) (deck-access dk))
-  (hash-set* (presentation->jsexpr (deck-presentation dk))
+  (hash-set* (presentation->jsexpr (deck-presentation dk) qa?)
              'owner (hasheq 'email (owner-email (deck-owner dk)) 'name (owner-name (deck-owner dk)))
              'access (hasheq 'owner owner? 'edit edit? 'moderate moderate? 'copy copy? 'results results?)))
 
@@ -124,9 +125,9 @@
   (hasheq 'email (share-email sh) 'edit (share-edit? sh) 'moderate (share-moderate? sh)
           'copy (share-copy? sh) 'results (share-results? sh)))
 
-;; PresentationListing -> JSExpr
-(define (presentation-listing->jsexpr l)
-  (hash-set (deck->jsexpr (presentation-listing-deck l)) 'live_sessions (presentation-listing-live-sessions l)))
+;; PresentationListing Boolean -> JSExpr
+(define (presentation-listing->jsexpr l qa?)
+  (hash-set (deck->jsexpr (presentation-listing-deck l) qa?) 'live_sessions (presentation-listing-live-sessions l)))
 
 ;; Option -> JSExpr
 (define (option->jsexpr o) (hasheq 'id (option-id o) 'idx (option-idx o) 'label (option-label o) 'exclusive (option-exclusive? o)))
@@ -146,8 +147,8 @@
           'audience_url audience 'screen_url screen))
 
 ;; Deck [Listof Poll] [Listof SessionView] -> JSExpr
-(define (presentation-detail->jsexpr dk polls views)
-  (hash-set* (deck->jsexpr dk) 'polls (map poll->jsexpr polls) 'sessions (map session-view->jsexpr views)))
+(define (presentation-detail->jsexpr dk qa? polls views)
+  (hash-set* (deck->jsexpr dk qa?) 'polls (map poll->jsexpr polls) 'sessions (map session-view->jsexpr views)))
 
 ;; Tally -> JSExpr
 (define (tally->jsexpr t) (hasheq 'id (tally-id t) 'label (tally-label t) 'count (tally-count t) 'exclusive (tally-exclusive? t)))
@@ -369,8 +370,8 @@
     (define shared-deck (deck (presentation 7 "Intro to HtDP" 42 "2026-11-15T09:00:00.000Z" #f)
                               (owner "ada@example.org" "Ada")
                               (access #f #t #f #t #f #f)))
-    (check-equal? (deck->jsexpr shared-deck) (fixture "presentation.json"))
-    (check-equal? (presentation-listing->jsexpr (presentation-listing shared-deck 1)) (fixture "presentation-listing.json"))
+    (check-equal? (deck->jsexpr shared-deck #f) (fixture "presentation.json"))
+    (check-equal? (presentation-listing->jsexpr (presentation-listing shared-deck 1) #f) (fixture "presentation-listing.json"))
     (check-equal? (list (share->jsexpr (share "bob@example.org" #f #t #f #f))) (fixture "shares.json"))
     (check-equal? (me->jsexpr (user 3 "teacher@example.org" #t "Ada Teacher" "active") (limits 5242880 33554432 "free") 2097152)
                   (fixture "me.json"))

@@ -16,6 +16,7 @@
           [struct owner ([email string?] [name string?])]
           [struct deck ([presentation presentation?] [owner owner?] [access access?])]
           [struct presentation-listing ([deck deck?] [live-sessions natural-number/c])]
+          [listing-id (-> presentation-listing? id/c)]
           [struct option ([id id/c] [idx natural-number/c] [label string?] [exclusive? boolean?])]
           [struct option-draft ([label string?] [exclusive? boolean?])]
           [make-option-draft (-> any/c any/c option-draft?)]
@@ -102,6 +103,10 @@
 ;; A PresentationListing is a (presentation-listing Deck Natural)
 ;; interp. a deck plus the number of its sessions still live.
 (struct presentation-listing (deck live-sessions) #:transparent)
+
+;; PresentationListing -> Id
+;; the id of the listed presentation.
+(define (listing-id l) (presentation-id (deck-presentation (presentation-listing-deck l))))
 
 ;; An Option is an (option Id Natural String Boolean)
 ;; interp. one answer of a poll or run; an exclusive answer must be chosen alone.

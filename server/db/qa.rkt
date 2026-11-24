@@ -1,8 +1,9 @@
 #lang racket/base
 ;; Q&A persistence. Locking the session serializes submissions, moderation and session closure.
-(require racket/contract/base racket/match db "query.rkt" "../domain.rkt" "../qa.rkt")
+(require racket/contract/base racket/match db db/util/postgresql "query.rkt" "../domain.rkt" "../qa.rkt")
 (provide (contract-out
           [deck-qa-enabled? (-> connection? id/c boolean?)]
+          [decks-qa-enabled (-> connection? (listof id/c) (hash/c id/c boolean?))]
           [set-deck-qa! (-> connection? id/c boolean? void?)]
           [get-qa (-> connection? id/c (or/c qa-state? #f))]
           [set-qa-open! (-> connection? id/c boolean? (or/c qa-state? 'not-found 'ended 'disabled))]
@@ -45,6 +46,15 @@
 ;; whether the deck permits Q&A in its next session.
 (define-query (deck-qa-enabled? c pid) #:value
   "SELECT qa_enabled FROM presentations WHERE id=$1")
+
+;; Connection (Listof Id) -> (Hashof Id Boolean)
+;; the Q&A setting of each given deck in one query; ids that match no deck are absent.
+(define (decks-qa-enabled c pids)
+  (for/hash ([row (in-list (qa-enabled-rows c (list->pg-array pids)))])
+    (values (vector-ref row 0) (vector-ref row 1))))
+
+(define-query (qa-enabled-rows c pids) #:rows values
+  "SELECT id, qa_enabled FROM presentations WHERE id = ANY($1::bigint[])")
 
 ;; Connection Id Boolean -> Void
 ;; changes only the setting copied by future sessions.

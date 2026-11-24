@@ -36,9 +36,10 @@
   #:scope "decks" #:read-only
   #:args [archived? (values [archived (optional-boolean #f)])]
   (match-define (mcp-ctx d me) ctx)
-  (hasheq 'decks (for/list ([l (list-presentations (deps-db d) (user-id me) archived?)])
-                   (hash-set (presentation-listing->jsexpr l) 'qa_enabled
-                             (deck-qa-enabled? (deps-db d) (presentation-id (deck-presentation (presentation-listing-deck l))))))))
+  (define listings (list-presentations (deps-db d) (user-id me) archived?))
+  (define qa (decks-qa-enabled (deps-db d) (map listing-id listings)))
+  (hasheq 'decks (for/list ([l (in-list listings)])
+                   (presentation-listing->jsexpr l (hash-ref qa (listing-id l) #f)))))
 
 (define-tool (get-deck ctx)
   #:title "Get a deck"
@@ -48,8 +49,7 @@
   (match-define (mcp-ctx d me) ctx)
   (define dk (need-deck d me id 'view))
   (define result
-    (hash-set* (deck->jsexpr dk) 'polls (map poll->jsexpr (list-polls (deps-db d) id))
-               'qa_enabled (deck-qa-enabled? (deps-db d) id)))
+    (hash-set (deck->jsexpr dk (deck-qa-enabled? (deps-db d) id)) 'polls (map poll->jsexpr (list-polls (deps-db d) id))))
   (if ((current-deck-disabled?) (deps-db d) id) (hash-set result 'disabled #t) result))
 
 ;; ------------------------------------------------------------------ editing

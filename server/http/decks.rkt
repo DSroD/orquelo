@@ -58,12 +58,13 @@
 ;; Deps User Id [#:status Natural] -> Response
 ;; the deck as `me` sees it; 404 when it is not visible to them
 (define (deck-response d me id #:status [status 200])
-  (json-response (hash-set (deck->jsexpr (need-deck d me id 'view)) 'qa_enabled (deck-qa-enabled? (db d) id)) #:status status))
+  (json-response (deck->jsexpr (need-deck d me id 'view) (deck-qa-enabled? (db d) id)) #:status status))
 
 (define-endpoint (list-presentations* d req me)
-  (json-response (for/list ([listing (list-presentations (db d) (user-id me) (equal? (query-param req 'archived) "1"))])
-                   (hash-set (presentation-listing->jsexpr listing) 'qa_enabled
-                             (deck-qa-enabled? (db d) (presentation-id (deck-presentation (presentation-listing-deck listing))))))))
+  (define listings (list-presentations (db d) (user-id me) (equal? (query-param req 'archived) "1")))
+  (define qa (decks-qa-enabled (db d) (map listing-id listings)))
+  (json-response (for/list ([l (in-list listings)])
+                   (presentation-listing->jsexpr l (hash-ref qa (listing-id l) #f)))))
 
 ;; (-> X) (-> Void) -> X
 ;; runs body; if it escapes by exception, break or jump, runs undo
@@ -116,8 +117,7 @@
 
 (define-endpoint (get-presentation* d req me id)
   #:need [dk (deck me id #:can view)]
-  (define result (hash-set (presentation-detail->jsexpr dk (list-polls (db d) id) (visible-sessions d dk))
-                           'qa_enabled (deck-qa-enabled? (db d) id)))
+  (define result (presentation-detail->jsexpr dk (deck-qa-enabled? (db d) id) (list-polls (db d) id) (visible-sessions d dk)))
   (define detail (if ((current-deck-disabled?) (db d) id) (hash-set result 'disabled #t) result))
   (json-response
    (if (access-allows? (deck-access dk) 'moderate) detail

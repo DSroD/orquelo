@@ -12,11 +12,12 @@
 (define invisible-rx #px"\\p{Cc}|\\p{Cf}|\\p{Zl}|\\p{Zp}")
 
 ;; Any String -> String
-;; the name with invisible characters removed, trimmed and cut to 100 characters; `fallback` when
-;; nothing is left
+;; the name with invisible characters removed, trimmed, cut to 100 characters and trimmed again
+;; (the cut may end in whitespace); `fallback` when nothing is left
 (define (clean-name v fallback)
   (define s (if (string? v) (string-trim (regexp-replace* invisible-rx v "")) ""))
-  (if (string=? s "") fallback (substring s 0 (min max-name-length (string-length s)))))
+  (define cut (string-trim (substring s 0 (min max-name-length (string-length s)))))
+  (if (string=? cut "") fallback cut))
 
 ;; Any -> (or String #f)
 ;; the URI when it is a plain https URI of reasonable length
@@ -36,6 +37,7 @@
   (check-equal? (clean-name "​ " "fallback") "fallback")
   (check-equal? (clean-name 5 "fallback") "fallback")
   (check-equal? (string-length (clean-name (make-string 300 #\a) "x")) 100)
+  (check-equal? (clean-name (string-append (make-string 99 #\a) " b") "x") (make-string 99 #\a))
   (check-equal? (https-uri-or-false "https://a.example/x") "https://a.example/x")
   (check-false (https-uri-or-false "http://a.example"))
   (check-equal? (same-origin-uri-or-false "https://a.example" "a.example") "https://a.example")

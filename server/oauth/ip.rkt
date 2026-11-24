@@ -77,9 +77,10 @@
     [else (and (in? "2000::" 3)
                (for/and ([b (in-list reserved-v6-blocks)]) (not (in? (car b) (cdr b)))))]))
 
-;; global unicast space that is not for public hosts: Teredo, benchmarking, ORCHID, documentation
+;; global unicast space that is not for public hosts: IETF protocol assignments (2001::/23, which
+;; holds Teredo), benchmarking, ORCHID, documentation
 (define reserved-v6-blocks
-  '(("2001::" . 32) ("2001:2::" . 48) ("2001:10::" . 28) ("2001:20::" . 28) ("2001:db8::" . 32) ("3fff::" . 20)))
+  '(("2001::" . 23) ("2001:2::" . 48) ("2001:10::" . 28) ("2001:20::" . 28) ("2001:db8::" . 32) ("3fff::" . 20)))
 
 ;; String -> Boolean
 ;; may we connect to this address: a global unicast IPv4 or IPv6 address (see the module comment)
@@ -88,16 +89,20 @@
         [(parse-ipv6 s) => public-v6?]
         [else #f]))
 
+;; what the property tests (tests/ip-prop-test.rkt) reach into
+(module+ for-test
+  (provide parse-ipv4 parse-ipv6 private-v4-blocks reserved-v6-blocks))
+
 (module+ test
   (require rackunit)
   (define public '("8.8.8.8" "1.1.1.1" "93.184.216.34" "100.63.255.255" "172.15.0.1" "172.32.0.1"
-                   "198.17.0.1" "198.20.0.1" "2001:30::1" "2001:4860:4860::8888" "2606:4700:4700::1111" "2a00:1450:4001::200e"
+                   "198.17.0.1" "198.20.0.1" "2001:4860:4860::8888" "2606:4700:4700::1111" "2a00:1450:4001::200e"
                    "::ffff:8.8.8.8" "::ffff:808:808" "64:ff9b::8.8.8.8" "2002:808:808::1"))
   (define private '("0.0.0.0" "0.1.2.3" "10.1.2.3" "100.64.0.1" "100.127.255.255" "127.0.0.1" "127.255.0.1"
                     "169.254.169.254" "172.16.0.1" "172.31.255.255" "192.0.0.8" "192.0.2.1" "192.168.1.1"
                     "198.18.0.1" "198.19.255.255" "198.51.100.7" "203.0.113.9" "224.0.0.1" "239.1.1.1"
                     "240.0.0.1" "255.255.255.255"
-                    "::" "::1" "fc00::1" "fd12:3456::1" "fe80::1" "ff02::1" "2001:db8::1" "2001::1"
+                    "::" "::1" "fc00::1" "fd12:3456::1" "fe80::1" "ff02::1" "2001:db8::1" "2001::1" "2001:30::1" "2001:1ff::1"
                     "192.88.99.1" "3fff::1" "3fff:fff::1" "2001:2::1" "2001:10::1" "2001:1f::1" "2001:20::1" "2001:2f::1" "5f00::1"
                     "::ffff:127.0.0.1" "::ffff:10.0.0.1" "::ffff:7f00:1" "::ffff:169.254.169.254"
                     "64:ff9b::10.0.0.1" "64:ff9b::7f00:1" "2002:7f00:1::1" "::8.8.8.8"

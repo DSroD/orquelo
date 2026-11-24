@@ -15,7 +15,7 @@
 ;; http only on a loopback host (RFC 8252 section 7.3); the optional port is group 2
 (define loopback-rx (pregexp (string-append "^http://(127\\.0\\.0\\.1|\\[::1\\]|localhost)(?::([0-9]{1,5}))?" tail)))
 (define https-rx (pregexp (string-append "^https://([A-Za-z0-9.-]+|\\[[0-9a-fA-F:.]+\\])(?::([0-9]{1,5}))?" tail)))
-(define cimd-rx #px"^https://([A-Za-z0-9-]+(?:\\.[A-Za-z0-9-]+)+)(/[A-Za-z0-9._~!$&'()*+,;=:@%/-]*)$")
+(define cimd-rx #px"^https://([a-z0-9-]+(?:\\.[a-z0-9-]+)+)(/[A-Za-z0-9._~!$&'()*+,;=:@%/-]*)$")
 
 ;; Any -> Boolean
 ;; printable ASCII only, so no control character, space or non-ASCII look-alike can pass
@@ -100,6 +100,7 @@
     (for ([u '("http://app.example/c.json" "https://app.example" "https://app.example:443/c.json"
                "https://app.example/c.json?x=1" "https://app.example/c.json#f" "https://u@app.example/c.json"
                "https://127.0.0.1/c.json" "https://[::1]/c.json" "https://localhost/c.json"
-               "https://app.example/a/../c.json" "https://app.example/./c.json" "https://app.example./c.json")])
+               "https://app.example/a/../c.json" "https://app.example/./c.json" "https://app.example./c.json"
+               "https://App.Example/c.json")])
       (check-false (cimd-url? u) u))
     (check-false (cimd-url? #f))))

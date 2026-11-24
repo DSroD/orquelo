@@ -75,8 +75,9 @@
 
 
 ;; String -> Response
-;; the 200 {redirect_to} reply
-(define (redirect-reply url) (json-response (hasheq 'redirect_to url)))
+;; the 200 {redirect_to} reply: the redirect URL carries an authorization code, so it is never cached
+(define (redirect-reply url)
+  (json-response (hasheq 'redirect_to url) #:headers (list (make-header #"Cache-Control" #"no-store"))))
 
 ;; (Listof Header)
 (define cors-headers (list (make-header #"Access-Control-Allow-Origin" #"*")))
@@ -129,18 +130,21 @@
   (define token-bucket (make-bucket 60 1))
   (define authorize-bucket (make-bucket 60 1))
   (define register-bucket (make-bucket 10 (/ 10 3600)))
-  (define register-global (make-bucket 500 (/ 500 86400)))
+
+  ;; Request -> String
+  ;; the key rate limits count the caller under (an IPv6 caller by its /64)
+  (define (caller-key req) (rate-key (client-ip req trust-proxy?)))
 
   ;; Request -> Response
   ;; the authorization endpoint, per-address limited
   (define (authorize req)
-    (take! authorize-bucket (client-ip req trust-proxy?))
+    (take! authorize-bucket (caller-key req))
     (handle-authorize srv req))
 
   ;; Request -> Response
   ;; the token endpoint: a wrong code or refresh token strikes (client_id, ip); a success forgets the pair
   (define (token req)
-    (define ip (client-ip req trust-proxy?))
+    (define ip (caller-key req))
     (take! token-bucket ip)
     (define client-id (form-client-id req))
     (define wait (throttle-wait token-throttle client-id ip))
@@ -150,10 +154,9 @@
     r)
 
   ;; Request -> Response
-  ;; dynamic client registration, limited per address and globally
+  ;; dynamic client registration, limited per address; the library caps the unused clients overall
   (define (register req)
-    (take! register-bucket (client-ip req trust-proxy?))
-    (take! register-global 'global)
+    (take! register-bucket (caller-key req))
     (handle-register srv req))
 
   (define-endpoint (get-request d req me id)

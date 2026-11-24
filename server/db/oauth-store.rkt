@@ -41,6 +41,12 @@
   (match-define (client id kind name uri logo uris refresh? created expires) cl)
   (upsert-client! c id (symbol->string kind) name uri logo (list->pg-array uris) refresh? created expires))
 
+;; Connection -> Natural
+;; how many registered clients no grant refers to
+(define-query (count-unused-registered c) #:value
+  "SELECT count(*) FROM oauth_clients k WHERE k.kind='registered'
+     AND NOT EXISTS (SELECT 1 FROM oauth_grants g WHERE g.client_id=k.client_id)")
+
 ;; --- pending requests
 
 (define pending-cols "id_hash, client_id, redirect_uri, explicit_redirect, scopes, state, challenge, resource, expires_at")
@@ -271,13 +277,16 @@
 ;; garbage, and one would take token locks before grant locks, the reverse of a grant delete
 (define (sweep! c now)
     (query-exec c "DELETE FROM oauth_pending WHERE expires_at <= $1" now)
-    (query-exec c "DELETE FROM oauth_codes WHERE expires_at <= $1" now)
+    (query-exec c "DELETE FROM oauth_codes WHERE expires_at <= $1 AND (used_at IS NULL OR used_at + $2::bigint <= $1)"
+                now used-code-retention)
     (query-exec c "DELETE FROM oauth_access_tokens WHERE expires_at <= $1" now)
     (query-exec c "DELETE FROM oauth_refresh_tokens WHERE expires_at <= $1" now)
-    (query-exec c "DELETE FROM oauth_grants g WHERE g.created_at + $2::bigint <= $1::bigint
-                     AND NOT EXISTS (SELECT 1 FROM oauth_access_tokens t WHERE t.grant_id=g.id)
-                     AND NOT EXISTS (SELECT 1 FROM oauth_refresh_tokens t WHERE t.grant_id=g.id)"
-                now token-less-grant-lifetime)
+    (query-exec c "DELETE FROM oauth_grants g
+                    WHERE g.created_at + $3::bigint <= $1::bigint
+                       OR (g.created_at + $2::bigint <= $1::bigint
+                           AND NOT EXISTS (SELECT 1 FROM oauth_access_tokens t WHERE t.grant_id=g.id)
+                           AND NOT EXISTS (SELECT 1 FROM oauth_refresh_tokens t WHERE t.grant_id=g.id))"
+                now token-less-grant-lifetime grant-lifetime)
     (query-exec c "DELETE FROM oauth_clients k
                     WHERE NOT EXISTS (SELECT 1 FROM oauth_grants g WHERE g.client_id=k.client_id)
                       AND NOT EXISTS (SELECT 1 FROM oauth_pending p WHERE p.client_id=k.client_id)
@@ -302,6 +311,7 @@
   (oauth-store
    (λ (id) (select-client c id))
    (λ (cl) (put-client! c cl))
+   (λ () (count-unused-registered c))
    (λ (p) (put-pending! c p))
    (λ (h now) (select-pending c h now))
    (λ (h now) (take-pending! c h now))

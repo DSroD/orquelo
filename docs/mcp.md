@@ -33,7 +33,10 @@ Every request needs `Authorization: Bearer <access token>`. A request that carri
   A 401 from `/mcp` carries `WWW-Authenticate: Bearer resource_metadata="..."`.
 - Clients: Client ID Metadata Documents (the `client_id` is an https URL, preferred) or dynamic registration
   (`POST /oauth/register`). Public clients only (`token_endpoint_auth_method: none`); redirect URIs are https or
-  loopback http.
+  loopback http. A metadata-document `client_id` must have a lowercase host. A registered client that gets no approval
+  within 24 hours is deleted, and registration answers 429 (with `Retry-After`) while 1000 such unused clients are
+  stored. Registration, authorization and token requests are rate limited per address (an IPv6 address counts by
+  its /64).
 - Flow: authorization code with PKCE `S256` only. The authorization response carries `iss` (RFC 9207).
 - Scopes: `decks` (read and edit decks, polls and settings) and `results` (read aggregate results). The consent page
   lets you narrow what the client asked for. A request without `scope` asks for all of them. Orquelo's per-deck access
@@ -49,6 +52,11 @@ Every request needs `Authorization: Bearer <access token>`. A request that carri
 | authorization code | 60 seconds, single use |
 | access token | 1 hour |
 | refresh token | 30 days, sliding: each refresh issues a new pair and the lifetime starts over |
+| grant (the approval) | 90 days from approval, not extended by use |
+
+A grant ends 90 days after you approved it, however often it is refreshed: no token outlives it, and the next refresh
+fails with `invalid_grant`, so the client has to be approved again. A refresh also fails when the client no longer
+exists or no longer allows refresh tokens. Connected apps does not show the expiry.
 
 Tokens are opaque random values, stored only as SHA-256 hashes. Refresh tokens rotate, and there is **no reuse grace
 window**: presenting an already used refresh token (or code) revokes the whole grant, so a leaked token that gets used
@@ -57,7 +65,8 @@ twice ends the connection. The client then has to be approved again.
 ### What ends access
 
 - Disconnecting the app in Connected apps (`DELETE /api/oauth/grants/:id`).
-- Reusing a refresh token (above) or letting it expire.
+- Reusing a refresh token (above) or letting it expire, or the grant's 90 days running out. A used authorization code
+  is remembered for 24 hours, so replaying it in that time also revokes its grant.
 - A password change or a suspension of the account. A grant records the user's session epoch; both bump it, so the
   access tokens stop working at once and Connected apps shows the app as "reconnect needed". Approving it again makes a
   new connection.

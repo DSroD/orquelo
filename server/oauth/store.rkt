@@ -8,6 +8,7 @@
           [struct oauth-store
             ([client-ref (-> string? (or/c client? #f))]
              [client-put! (-> client? void?)]
+             [unused-registered-count (-> exact-nonnegative-integer?)]
              [pending-put! (-> pending? void?)]
              [pending-ref (-> bytes? exact-integer? (or/c pending? #f))]
              [pending-take! (-> bytes? exact-integer? (or/c pending? #f))]
@@ -27,8 +28,10 @@
              [atomically (-> (-> any) any)])]
           [token-less-grant-lifetime exact-nonnegative-integer?]
           [registered-client-lifetime exact-nonnegative-integer?]
+          [used-code-retention exact-nonnegative-integer?]
+          [grant-lifetime exact-nonnegative-integer?]
           [make-memory-store (-> oauth-store?)])
-         store-client-ref store-client-put! store-pending-put! store-pending-ref store-pending-take!
+         store-client-ref store-client-put! store-unused-registered-count store-pending-put! store-pending-ref store-pending-take!
          store-grant-create! store-grant-ref store-grants-of store-grant-delete! store-grant-touch!
          store-code-put! store-code-consume! store-token-put! store-access-ref store-refresh-ref
          store-refresh-rotate! store-sweep! store-atomically)
@@ -38,6 +41,8 @@
 ;; so a database-backed store can run each one in a short transaction.
 ;;   client-ref             id -> Client or #f (stale cached documents included; see `client-expires`)
 ;;   client-put!            insert or replace by id
+;;   unused-registered-count how many registered clients no grant refers to (the storage a registration
+;;                          flood would fill)
 ;;   pending-put!           store a pending authorization request
 ;;   pending-ref            by id hash; #f once expired
 ;;   pending-take!          the pending request, removed (single use); #f when absent or expired
@@ -49,8 +54,9 @@
 ;;   grant-delete!          subject, id -> was there such a grant of that subject; its tokens and codes go too
 ;;   grant-touch!           records `last-used`
 ;;   code-put!              store an authorization code (its grant must exist)
-;;   code-consume!          atomically use a code once: the record; (reused grant-id) when it was used
-;;                          before (even if it has expired since); #f when unknown or expired
+;;   code-consume!          atomically use a code once, at `now`: the record; (reused grant-id) when it was
+;;                          used before (even if it has expired since, while the row is kept: see
+;;                          `used-code-retention`); #f when unknown or expired
 ;;   token-put!             store an access or refresh token; #f (and nothing stored) when its grant no
 ;;                          longer exists, e.g. revoked meanwhile
 ;;   access-ref             hash, now -> the live access token and its grant, or #f
@@ -60,16 +66,18 @@
 ;;                          token that belongs to that grant and store the new tokens; the touched Grant.
 ;;                          A retired token gives (reused grant-id); unknown, expired, another grant's or
 ;;                          with its grant gone gives #f and changes nothing
-;;   sweep!                 drop expired pending requests, codes and tokens (a retired refresh token
-;;                          goes when it expires), and clients that nothing refers to: cached ones past
-;;                          their expiry, registered ones created over 30 days ago; and grants that
-;;                          hold no token and were created over 15 minutes ago (an approval whose code
-;;                          was never exchanged, or whose exchange failed)
+;;   sweep!                 drop expired pending requests, unused codes and tokens (a retired refresh
+;;                          token goes when it expires; a used code `used-code-retention` after its use,
+;;                          so that replaying it still finds its grant), and clients that nothing refers
+;;                          to: cached ones past their expiry, registered ones created over 24 hours ago;
+;;                          and grants that hold no token and were created over 15 minutes ago (an
+;;                          approval whose code was never exchanged, or whose exchange failed), or that
+;;                          were created over `grant-lifetime` ago
 ;;   atomically             run a thunk so that its store operations happen together or not at all: when
 ;;                          the thunk raises (anything, not only an exn) or escapes, everything it did is
 ;;                          undone. Calls nest like savepoints: an inner call that fails undoes only its
 ;;                          own operations; the outer one carries on if it handles the failure
-(struct oauth-store (client-ref client-put! pending-put! pending-ref pending-take! grant-create!
+(struct oauth-store (client-ref client-put! unused-registered-count pending-put! pending-ref pending-take! grant-create!
                      grant-ref grants-of grant-delete! grant-touch! code-put! code-consume! token-put!
                      access-ref refresh-ref refresh-rotate! sweep! atomically))
 
@@ -78,6 +86,7 @@
   (begin (define (caller st . args) (apply (accessor st) args)) ...))
 (define-callers
   [store-client-ref oauth-store-client-ref] [store-client-put! oauth-store-client-put!]
+  [store-unused-registered-count oauth-store-unused-registered-count]
   [store-pending-put! oauth-store-pending-put!] [store-pending-ref oauth-store-pending-ref]
   [store-pending-take! oauth-store-pending-take!] [store-grant-create! oauth-store-grant-create!]
   [store-grant-ref oauth-store-grant-ref] [store-grants-of oauth-store-grants-of]
@@ -88,7 +97,15 @@
   [store-sweep! oauth-store-sweep!] [store-atomically oauth-store-atomically])
 
 (define token-less-grant-lifetime (* 15 60))
-(define registered-client-lifetime (* 30 24 60 60))
+;; Natural
+;; seconds a registered client that no grant refers to is kept
+(define registered-client-lifetime (* 24 60 60))
+;; Natural
+;; seconds a used authorization code is kept, so that replaying it revokes its grant
+(define used-code-retention (* 24 60 60))
+;; Natural
+;; seconds from approval after which a grant is dead, whatever its tokens say
+(define grant-lifetime (* 90 24 60 60))
 
 ;; -> OAuthStore
 ;; a store in memory, safe for concurrent threads
@@ -96,7 +113,7 @@
   (define clients (make-hash))   ; id -> Client
   (define pendings (make-hash))  ; id hash -> Pending
   (define grants (make-hash))    ; id -> Grant
-  (define codes (make-hash))     ; hash -> (mcons CodeRecord used?)
+  (define codes (make-hash))     ; hash -> (mcons CodeRecord (or used-at #f))
   (define access (make-hash))    ; hash -> TokenRecord
   (define refresh (make-hash))   ; hash -> (mcons TokenRecord retired?)
   (define tables (list clients pendings grants codes access refresh))
@@ -164,7 +181,7 @@
      (cond [(not row) #f]
            [(mcdr row) (reused (code-record-grant-id (mcar row)))]
            [(expired? (code-record-expires (mcar row)) now) #f]
-           [else (set-mcdr! row #t) (mcar row)])))
+           [else (set-mcdr! row now) (mcar row)])))
 
   (define (token-put! t)
     (locked
@@ -205,15 +222,19 @@
   (define (sweep! now)
     (locked
      (for ([(k v) (in-hash pendings)] #:when (expired? (pending-expires v) now)) (hash-remove! pendings k))
-     (for ([(k v) (in-hash codes)] #:when (expired? (code-record-expires (mcar v)) now)) (hash-remove! codes k))
+     (for ([(k v) (in-hash codes)]
+           #:when (and (expired? (code-record-expires (mcar v)) now)
+                       (or (not (mcdr v)) (expired? (+ (mcdr v) used-code-retention) now))))
+       (hash-remove! codes k))
      (for ([(k v) (in-hash access)] #:when (expired? (token-record-expires v) now)) (hash-remove! access k))
      (for ([(k v) (in-hash refresh)] #:when (expired? (token-record-expires (mcar v)) now)) (hash-remove! refresh k))
      (define with-tokens
        (for/hash ([t (in-sequences (in-hash-values access) (map mcar (hash-values refresh)))])
          (values (token-record-grant-id t) #t)))
      (for ([(id g) (in-hash (hash-copy grants))]
-           #:unless (hash-ref with-tokens id #f)
-           #:when (<= (+ (grant-created g) token-less-grant-lifetime) now))
+           #:when (or (and (not (hash-ref with-tokens id #f))
+                           (<= (+ (grant-created g) token-less-grant-lifetime) now))
+                      (<= (+ (grant-created g) grant-lifetime) now)))
        (hash-remove! grants id)
        (drop-credentials! id))
      (define in-use
@@ -228,6 +249,9 @@
   (oauth-store
    (λ (id) (locked (hash-ref clients id #f)))
    (λ (c) (locked (hash-set! clients (client-id c) c)))
+   (λ () (locked (let ([granted (for/hash ([g (in-hash-values grants)]) (values (grant-client-id g) #t))])
+                   (for/sum ([c (in-hash-values clients)])
+                     (if (and (eq? (client-kind c) 'registered) (not (hash-ref granted (client-id c) #f))) 1 0)))))
    (λ (p) (locked (hash-set! pendings (pending-id-hash p) p)))
    (λ (h now) (locked (let ([p (hash-ref pendings h #f)]) (and p (not (expired? (pending-expires p) now)) p))))
    (λ (h now) (locked (let ([p (hash-ref pendings h #f)])

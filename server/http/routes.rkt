@@ -88,11 +88,22 @@
   (route-kit d signed-in public named (λ (req) (check-origin! (deps-cfg d) req))))
 
 ;; Response -> Response
-;; the SPA page of a consent request: never framed (clickjacking) and never leaking its URL as a referrer
+;; the SPA response, never framed (clickjacking)
+(define (unframed r)
+  (struct-copy response r [headers (cons (header #"Content-Security-Policy" #"frame-ancestors 'none'")
+                                         (response-headers r))]))
+
+;; Response -> Response
+;; the SPA page of a consent request, never leaking its URL as a referrer
 (define (consent-page r)
-  (struct-copy response r [headers (list* (header #"Content-Security-Policy" #"frame-ancestors 'none'")
-                                          (header #"Referrer-Policy" #"no-referrer")
-                                          (response-headers r))]))
+  (struct-copy response r [headers (cons (header #"Referrer-Policy" #"no-referrer") (response-headers r))]))
+
+;; [Listof String] -> Boolean
+;; is this the consent page? Empty segments are dropped first, as the SPA's own route parsing does, so
+;; `//connect/<id>` counts
+(define (consent-path? segs)
+  (define named (filter non-empty-string? segs))
+  (and (pair? named) (equal? (car named) "connect")))
 
 ;; Deps Plugin [#:oauth-fetch (String -> Fetched)] -> Handler
 ;; the dispatching request handler; every request is recorded under its route template. Requests no core
@@ -125,7 +136,7 @@
            (api-error! 404 "not_found" "no such endpoint")]
           [else (set-route! "static")
                 (define page (static-response (config-static-dir cfg) segs))
-                (if (and (pair? segs) (equal? (car segs) "connect")) (consent-page page) page)]))
+                (unframed (if (consent-path? segs) (consent-page page) page))]))
 
   (define dispatch-plugin ((plugin-routes p) kit fallback))
   (define oauth-routes (make-oauth-routes d oauth-fetch))
@@ -220,6 +231,13 @@
     (check-false (rejected? (λ () (check-origin! cfg (req #"PATCH" #"http://localhost:8080"))))))
   (test-case "origin not required for GET"
     (check-false (rejected? (λ () (check-origin! cfg (req #"GET"))))))
+  (test-case "the consent page is found as the SPA parses it"
+    (check-true (consent-path? '("connect" "abc")))
+    (check-true (consent-path? '("" "connect" "abc")))
+    (check-true (consent-path? '("" "" "connect")))
+    (check-false (consent-path? '("connected-apps")))
+    (check-false (consent-path? '("decks" "connect")))
+    (check-false (consent-path? '())))
   (test-case "mutating methods"
     (check-true (mutating? (req #"post")))
     (check-false (mutating? (req #"GET")))))

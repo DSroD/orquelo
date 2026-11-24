@@ -25,7 +25,8 @@ quality and idiom matter as much as behaviour.
   Orquelo tools are in `server/http/mcp-tools.rkt`; see `docs/mcp.md`
 - `server/oauth/`: a generic OAuth 2.1 authorization server (PKCE, CIMD, DCR, opaque tokens) over a pluggable
   store. Orquelo's Postgres store is `server/db/oauth-store.rkt`, its routes `server/http/oauth-routes.rkt`.
-  Neither library imports Orquelo code
+  Neither library imports Orquelo code. Its property and model-based tests live in `server/oauth/tests/` (rackcheck,
+  test-only: never require them from code reachable from `main.rkt`)
 - `web/`: Svelte 5 + Vite SPA. `web/src/lib/types.ts` mirrors the API contract
 - `e2e/`: Playwright user stories (`stories/*.spec.ts`) over helpers in `e2e/support` (actors: `Presenter`,
   `Projector`, `Student`, `McpClient`). Specs import `test`/`expect` only from `../support`
@@ -54,6 +55,9 @@ Run everything through the flake's devShell:
 - `scripts/build-image-in-docker [system] [attr]` then `scripts/e2e-image [image]`: builds the Linux OCI image
   in a Docker-hosted Nix (works on macOS) and tests it end to end against Postgres (password login, `user` CLI)
 - `scripts/dev`: local dev (`.env`, database `orquelo_core`); creates the database when it is missing
+- Property tests pick a random seed each run and print `property seed: PROP_SEED=<n>`; rerun with that `PROP_SEED` to
+  reproduce a failure, and set `PROP_SCALE=<k>` to run k times as many cases. rackcheck comes from the devShell
+  (`PLTCOLLECTS`) or `lib.racketTestPkgs`
 - `nix develop -c sh -c 'cd web && npm run test && npm run build'`
 - `nix flake check`
 

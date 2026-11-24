@@ -17,6 +17,7 @@
 (define negative-ttl 300)
 (define max-negative-entries 1000)
 (define max-redirect-uris 20)
+(define max-concurrent-fetches 8)
 
 ;; String -> Fetched
 ;; GETs a metadata document. A reply that is not 200 carries no body; a body over 5 KiB raises
@@ -34,11 +35,19 @@
   (close-input-port (response-body r))
   (fetched (response-status r) (response-header r "content-type") (response-header r "cache-control") body))
 
-;; A NegativeCache is a (negative-cache (MutableHash String Integer) Semaphore)
-;; client ids whose fetch failed, with the time until which we do not try again
-(struct negative-cache (table lock))
+;; A NegativeCache is a (negative-cache (MutableHash String Integer) Semaphore
+;;                                       (MutableHash String Flight) Semaphore)
+;; client ids whose fetch failed, with the time until which we do not try again; the lock guarding
+;; it and the fetches in flight; and the free slots for fetching (the cache is the one per-server
+;; place the fetches already pass through, so it also keeps their coordination)
+(struct negative-cache (table lock flights slots))
 
-(define (make-negative-cache) (negative-cache (make-hash) (make-semaphore 1)))
+;; A Flight is a (flight Semaphore (Boxof (or Client #f)))
+;; a fetch of one client id that is under way: posted when done, and its outcome
+(struct flight (done outcome))
+
+(define (make-negative-cache)
+  (negative-cache (make-hash) (make-semaphore 1) (make-hash) (make-semaphore max-concurrent-fetches)))
 
 ;; NegativeCache Real -> Void
 ;; forgets the entries that have run out
@@ -80,9 +89,32 @@
     [(and cached (client-expires cached) (> (client-expires cached) now)) cached]
     [(recently-failed? nc id now) #f]
     [else
-     (define fresh (fetch-client app id now))
+     (define fresh (fetch-once nc app id now))
      (cond [fresh (store-client-put! store fresh) fresh]
            [else (remember-failure! nc id now) #f])]))
+
+;; NegativeCache OAuthApp String Integer -> (or Client #f)
+;; fetches the document unless another caller already is, in which case it waits for that fetch and
+;; shares its outcome; at most `max-concurrent-fetches` fetches run at once
+(define (fetch-once nc app id now)
+  (define-values (f leader?)
+    (call-with-semaphore (negative-cache-lock nc)
+      (λ () (define running (hash-ref (negative-cache-flights nc) id #f))
+            (cond [running (values running #f)]
+                  [else (define new (flight (make-semaphore 0) (box #f)))
+                        (hash-set! (negative-cache-flights nc) id new)
+                        (values new #t)]))))
+  (cond
+    [leader?
+     (dynamic-wind
+      void
+      (λ () (set-box! (flight-outcome f)
+                      (call-with-semaphore (negative-cache-slots nc) (λ () (fetch-client app id now)))))
+      (λ () (call-with-semaphore (negative-cache-lock nc) (λ () (hash-remove! (negative-cache-flights nc) id)))
+            (semaphore-post (flight-done f))))
+     (unbox (flight-outcome f))]
+    [else (sync (semaphore-peek-evt (flight-done f)))
+          (unbox (flight-outcome f))]))
 
 ;; OAuthApp String Integer -> (or Client #f)
 ;; fetches and validates the document; any failure to do so is #f
@@ -236,6 +268,58 @@
     (set-box! next (reply (doc)))
     (check-true (client? (resolve-client app store nc id)))
     (check-equal? (unbox fetches) 2))
+
+  (test-case "concurrent resolves of one client id share a single fetch"
+    (define gate (make-semaphore 0))
+    (define calls (box 0))
+    (define blocked-app
+      (oauth-app "https://orq.example" "https://orq.example/mcp" '(("decks" . "d")) values (λ (s e) #t)
+                 (λ (url) (set-box! calls (add1 (unbox calls))) (semaphore-wait gate) (reply (doc)))
+                 (λ () 1000)))
+    (define-values (store nc) (fresh!))
+    (define results (make-channel))
+    (for ([_ (in-range 5)]) (thread (λ () (channel-put results (resolve-client blocked-app store nc id)))))
+    (sleep 0.2)
+    (check-equal? (unbox calls) 1 "followers wait instead of fetching")
+    (semaphore-post gate)
+    (define got (for/list ([_ (in-range 5)]) (sync/timeout 5 results)))
+    (check-true (andmap client? got))
+    (check-equal? (unbox calls) 1)
+    (check-equal? (hash-count (negative-cache-flights nc)) 0 "the flight is over"))
+
+  (test-case "a failed shared fetch fails every waiter and is remembered"
+    (define gate (make-semaphore 0))
+    (define failing-app
+      (oauth-app "https://orq.example" "https://orq.example/mcp" '(("decks" . "d")) values (λ (s e) #t)
+                 (λ (url) (semaphore-wait gate) (reply (doc) #:status 500)) (λ () 1000)))
+    (define-values (store nc) (fresh!))
+    (define results (make-channel))
+    (for ([_ (in-range 3)]) (thread (λ () (channel-put results (resolve-client failing-app store nc id)))))
+    (sleep 0.1)
+    (semaphore-post gate)
+    (check-equal? (for/list ([_ (in-range 3)]) (sync/timeout 5 results)) '(#f #f #f)))
+
+  (test-case "at most eight different documents are fetched at once"
+    (define gate (make-semaphore 0))
+    (define lock (make-semaphore 1))
+    (define running (box 0))
+    (define peak (box 0))
+    (define (bump! n) (call-with-semaphore lock (λ () (set-box! running (+ n (unbox running)))
+                                                      (set-box! peak (max (unbox peak) (unbox running))))))
+    (define (url i) (format "https://app~a.example/client.json" i))
+    (define many-app
+      (oauth-app "https://orq.example" "https://orq.example/mcp" '(("decks" . "d")) values (λ (s e) #t)
+                 (λ (u) (bump! 1) (semaphore-wait gate) (bump! -1)
+                        (reply (hasheq 'client_id u 'redirect_uris '("https://app.example/cb"))))
+                 (λ () 1000)))
+    (define-values (store nc) (fresh!))
+    (define results (make-channel))
+    (for ([i (in-range 12)]) (thread (λ () (channel-put results (resolve-client many-app store nc (url i))))))
+    (sleep 0.3)
+    (check-equal? (unbox peak) max-concurrent-fetches)
+    (for ([_ (in-range 12)]) (semaphore-post gate))
+    (check-true (andmap client? (for/list ([_ (in-range 12)]) (sync/timeout 5 results))))
+    (check-equal? (unbox peak) max-concurrent-fetches))
 
   (test-case "swept negative entries are forgotten"
     (define-values (store nc) (fresh!))

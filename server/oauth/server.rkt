@@ -6,7 +6,8 @@
 ;;
 ;; Decisions: public clients only, PKCE S256 only, one resource (RFC 8707) that every token is bound
 ;; to, authorization codes live 60 s and work once, access tokens 1 h, refresh tokens 30 days from
-;; their last use (sliding) and rotate on every use. A code or a refresh token presented a second
+;; their last use (sliding) and rotate on every use, and a grant ends 90 days after its approval
+;; whatever its tokens say. A code or a refresh token presented a second
 ;; time revokes the whole grant (there is no grace window: a client that retries a refresh after a
 ;; lost reply loses its grant and must be authorized again). Every approval is its own grant. A
 ;; grant also dies with its subject's epoch (see `subject-current?`).
@@ -19,7 +20,8 @@
          "dcr.rkt" "metadata.rkt" "json.rkt")
 (provide (contract-out
           [oauth-server? (-> any/c boolean?)]
-          [make-oauth-server (-> oauth-app? oauth-store? token-format? oauth-server?)]
+          [make-oauth-server (->* (oauth-app? oauth-store? token-format?) (#:max-unused-clients exact-nonnegative-integer?)
+                                  oauth-server?)]
           [handle-protected-resource (-> oauth-server? request? response?)]
           [handle-as-metadata (-> oauth-server? request? response?)]
           [handle-authorize (-> oauth-server? request? response?)]
@@ -40,6 +42,11 @@
 (define code-ttl 60)
 (define access-ttl (* 60 60))
 (define refresh-ttl (* 30 24 60 60))
+;; Natural
+;; registered clients that no grant refers to, at most: more registrations are refused until the
+;; sweep drops the old ones (registered-client-lifetime)
+(define default-max-unused-clients 1000)
+(define registration-retry-after (* 60 60))
 (define sweep-interval (* 10 60))
 (define touch-interval (* 5 60))
 (define max-param-length 4096)
@@ -48,15 +55,16 @@
 (define max-registration-bytes (* 16 1024))
 (define max-state-length 1024)
 
-;; An OAuthServer is an (oauth-server OAuthApp OAuthStore TokenFormat NegativeCache Semaphore (Boxof (or Real #f)))
+;; An OAuthServer is an (oauth-server OAuthApp OAuthStore TokenFormat NegativeCache Semaphore
+;;                                     (Boxof (or Real #f)) Natural)
 ;; the app, its store, the format of access and refresh tokens, the cache of failed metadata
-;; fetches, and the lock and time of the last sweep
-(struct oauth-server (app store format negatives sweep-lock last-sweep))
+;; fetches, the lock and time of the last sweep, and the cap on unused registered clients
+(struct oauth-server (app store format negatives sweep-lock last-sweep max-unused))
 
-;; OAuthApp OAuthStore TokenFormat -> OAuthServer
+;; OAuthApp OAuthStore TokenFormat [#:max-unused-clients Natural] -> OAuthServer
 ;; raises exn:fail:contract when the app's issuer or resource is not an acceptable URL
-(define (make-oauth-server app store format)
-  (oauth-server (validate-app! app) store format (make-negative-cache) (make-semaphore 1) (box #f)))
+(define (make-oauth-server app store format #:max-unused-clients [max-unused default-max-unused-clients])
+  (oauth-server (validate-app! app) store format (make-negative-cache) (make-semaphore 1) (box #f) max-unused))
 
 ;; OAuthServer -> Integer
 (define (now-of srv) ((oauth-app-clock (oauth-server-app srv))))
@@ -69,6 +77,7 @@
   (case status
     [(200) #"OK"] [(201) #"Created"] [(302) #"Found"] [(400) #"Bad Request"] [(401) #"Unauthorized"]
     [(403) #"Forbidden"] [(404) #"Not Found"] [(405) #"Method Not Allowed"] [(413) #"Payload Too Large"]
+    [(429) #"Too Many Requests"]
     [else #"Error"]))
 
 (define no-store (list (make-header #"Cache-Control" #"no-store") (make-header #"Pragma" #"no-cache")))
@@ -130,7 +139,9 @@
   (and (<= (bytes-length body) limit)
        type (regexp-match? #px"^\\s*(?i:application/x-www-form-urlencoded)\\s*(;|$)" type)
        (with-handlers ([exn:fail? (λ (e) #f)])
-         (alist->params (form-urlencoded->alist (bytes->string/utf-8 body))))))
+         ;; only & separates fields: a `;` in a value (state, redirect_uri) is data, not a separator
+         (parameterize ([current-alist-separator-mode 'amp])
+           (alist->params (form-urlencoded->alist (bytes->string/utf-8 body)))))))
 
 ;; ---------------------------------------------------------------------------------------------
 ;; Metadata
@@ -399,16 +410,25 @@
   (store-atomically
    store
    (λ ()
-     (unless (and (store-token-put! store (token-record access-hash (grant-id g) 'access scopes resource (+ now access-ttl)))
+     (unless (and (store-token-put! store (token-record access-hash (grant-id g) 'access scopes resource (expiry g now access-ttl)))
                   (or (not refresh-token)
-                      (store-token-put! store (token-record refresh-hash (grant-id g) 'refresh scopes resource (+ now refresh-ttl)))))
+                      (store-token-put! store (token-record refresh-hash (grant-id g) 'refresh scopes resource (expiry g now refresh-ttl)))))
        (invalid-grant!))
      (store-grant-touch! store (grant-id g) now)))
-  (token-response->jsexpr access-token refresh-token scopes access-ttl))
+  (token-response->jsexpr access-token refresh-token scopes (- (expiry g now access-ttl) now)))
+
+;; Grant -> Integer
+;; when the grant dies for good: `grant-lifetime` after its approval, however often it is refreshed
+(define (grant-end g) (+ (grant-created g) grant-lifetime))
+
+;; Grant Integer Natural -> Integer
+;; the expiry of a token minted at `now` for `ttl` seconds, never past the end of its grant
+(define (expiry g now ttl) (min (+ now ttl) (grant-end g)))
 
 ;; OAuthServer Params -> JSExpr
 ;; refresh_token grant: a live refresh token is exchanged for a new pair (the old one is retired
-;; and its lifetime starts over). Presenting a retired one revokes the grant. A `scope` parameter
+;; and its lifetime starts over, but not past the grant's: see `grant-lifetime`). It fails when the
+;; client has gone or may no longer hold refresh tokens. Presenting a retired one revokes the grant. A `scope` parameter
 ;; is ignored: the new tokens carry the scopes of the old.
 ;; The app's hooks run here, before the store is asked to rotate, so the store never calls back
 ;; into the app.
@@ -425,7 +445,10 @@
     [(reused gid) (revoke-grant! srv gid) (invalid-grant! "the refresh token was already used")]
     [#f (invalid-grant!)]
     [(cons old g)
+     (define c (store-client-ref store (grant-client-id g)))
      (unless (and (equal? (grant-client-id g) client-id*)
+                  c (client-refresh? c)
+                  (< now (grant-end g))
                   ((oauth-app-subject-current? app) (grant-subject g) (grant-epoch g)))
        (invalid-grant!))
      (define-values (access-token access-hash) (mint-token srv))
@@ -434,9 +457,9 @@
      (define resource (token-record-resource old))
      (match (store-refresh-rotate!
              store (token-record-hash old) now (grant-id g)
-             (list (token-record refresh-hash (grant-id g) 'refresh scopes resource (+ now refresh-ttl))
-                   (token-record access-hash (grant-id g) 'access scopes resource (+ now access-ttl))))
-       [(? grant?) (token-response->jsexpr access-token refresh-token scopes access-ttl)]
+             (list (token-record refresh-hash (grant-id g) 'refresh scopes resource (expiry g now refresh-ttl))
+                   (token-record access-hash (grant-id g) 'access scopes resource (expiry g now access-ttl))))
+       [(? grant?) (token-response->jsexpr access-token refresh-token scopes (- (expiry g now access-ttl) now))]
        [(reused gid) (revoke-grant! srv gid) (invalid-grant! "the refresh token was already used")]
        [#f (invalid-grant!)])]))
 
@@ -463,10 +486,27 @@
      (define now (now-of srv))
      (match (and doc (register doc now))
        [(? client? c)
-        (store-client-put! (oauth-server-store srv) c)
-        (json-response 201 (client->jsexpr c now))]
+        (if (store-client-put-capped! srv c)
+            (json-response 201 (client->jsexpr c now))
+            (registrations-full))]
        [(? oauth-error? e) (error-response e)]
        [#f (error-response (oauth-error "invalid_client_metadata" "the body must be a JSON object of at most 16 KiB" 400))])]))
+
+;; OAuthServer Client -> Boolean
+;; stores the new registered client unless too many are still unused (counted and stored together)
+(define (store-client-put-capped! srv c)
+  (define store (oauth-server-store srv))
+  (store-atomically
+   store
+   (λ () (and (< (store-unused-registered-count store) (oauth-server-max-unused srv))
+              (begin (store-client-put! store c) #t)))))
+
+;; -> Response
+;; 429 with Retry-After: the storage for unused registrations is full. RFC 7591 has no code for it,
+;; and 429 tells a client to wait, as a 400 would tell it its request was wrong
+(define (registrations-full)
+  (json-response 429 (oauth-error->jsexpr (oauth-error "temporarily_unavailable" "too many registrations, try again later" 429))
+                 (cons (make-header #"Retry-After" (string->bytes/utf-8 (number->string registration-retry-after))) no-store)))
 
 ;; ---------------------------------------------------------------------------------------------
 ;; Resource server side
@@ -903,6 +943,64 @@
     (define t1 (connect! srv))
     (set-box! now (+ 1000 (* 30 24 60 60)))
     (check-equal? (error-of (refresh-with srv (hash-ref t1 'refresh_token))) "invalid_grant"))
+
+  (test-case "a grant ends 90 days after its approval, however it is refreshed"
+    (define-values (srv store) (stage!))
+    (define day (* 24 60 60))
+    (define t1 (connect! srv))
+    (define (refresh-at! t at) (set-box! now at) (json-of (refresh-with srv (hash-ref t 'refresh_token))))
+    (define t2 (refresh-at! t1 (+ 1000 (* 29 day))))
+    (define t3 (refresh-at! t2 (+ 1000 (* 58 day))))
+    (define t4 (refresh-at! t3 (+ 1000 (* 87 day))))
+    (check-equal? (hash-ref t4 'expires_in) 3600)
+    ;; ten minutes before the end: the new access token lives only until then
+    (define t5 (refresh-at! t4 (+ 1000 (* 90 day) -600)))
+    (check-equal? (hash-ref t5 'expires_in) 600)
+    (set-box! now (+ 1000 (* 90 day) -1))
+    (check-true (principal? (authenticate-with srv (hash-ref t5 'access_token))))
+    (set-box! now (+ 1000 (* 90 day)))
+    (check-true (response? (authenticate-with srv (hash-ref t5 'access_token))))
+    (check-equal? (error-of (refresh-with srv (hash-ref t5 'refresh_token))) "invalid_grant"))
+
+  (test-case "refresh fails once the client no longer allows refresh tokens"
+    (define-values (srv store) (stage!))
+    (define t1 (connect! srv))
+    (define c (store-client-ref store app-id))
+    (store-client-put! store (struct-copy client c [refresh? #f]))
+    (check-equal? (error-of (refresh-with srv (hash-ref t1 'refresh_token))) "invalid_grant")
+    (store-client-put! store c)
+    (check-equal? (response-code (refresh-with srv (hash-ref t1 'refresh_token))) 200))
+
+  (test-case "a semicolon in a form value is data, not a separator"
+    (define req (make-req #"POST" "/oauth/token" #"state=a%3Bb;c=d&x=1;2" (list (cons "Content-Type" "application/x-www-form-urlencoded"))))
+    (check-equal? (form-params req 1000) (hash "state" "a;b;c=d" "x" "1;2")))
+
+  (test-case "registration stops when too many registered clients are unused"
+    (define-values (srv0 store) (stage!))
+    (define srv (make-oauth-server app store opaque-format #:max-unused-clients 2))
+    (define (register!)
+      (handle-register srv (make-req #"POST" "/oauth/register"
+                                     (jsexpr->bytes (hasheq 'redirect_uris '("https://app.example/cb"))))))
+    (define first (register!))
+    (check-equal? (response-code first) 201)
+    (check-equal? (response-code (register!)) 201)
+    (define full (register!))
+    (check-equal? (response-code full) 429)
+    (check-equal? (header-of full "Retry-After") "3600")
+    (check-equal? (header-of full "Cache-Control") "no-store")
+    (check-equal? (hash-ref (json-of full) 'error) "temporarily_unavailable")
+    (check-equal? (store-unused-registered-count store) 2)
+    ;; approving a request gives its client a grant, so it no longer counts as unused
+    (define cid (hash-ref (json-of first) 'client_id))
+    (check-true (string? (approve! srv (pending-id (authorize srv "client_id" cid "redirect_uri" "https://app.example/cb")) 7 0 '("decks"))))
+    (check-equal? (store-unused-registered-count store) 1)
+    (check-equal? (response-code (register!)) 201)
+    (check-equal? (response-code (register!)) 429)
+    ;; the sweep drops registrations nobody used within a day
+    (set-box! now (+ 1000 (* 25 60 60)))
+    (sweep! srv)
+    (check-equal? (store-unused-registered-count store) 0)
+    (check-equal? (response-code (register!)) 201))
 
   (test-case "a refresh token is for its own client and does not rotate for another"
     (define-values (srv store) (stage!))

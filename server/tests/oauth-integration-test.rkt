@@ -115,7 +115,9 @@
         (check-equal? (resp-status v) 422 (format "~a" bad))
         (check-equal? (hash-ref (resp-json v) 'field) "scopes"))
       (check-equal? (resp-status (http "GET" path #:cookies (list cookie))) 200 "refusals leave the request alone")
-      (check-equal? (resp-status (approve id cookie '("decks"))) 200)
+      (define ok (approve id cookie '("decks")))
+      (check-equal? (resp-status ok) 200)
+      (check-equal? (resp-header ok "Cache-Control") "no-store" "the redirect carries an authorization code")
       (check-equal? (resp-status (approve id cookie '("decks"))) 404)
       (check-equal? (resp-status (deny id cookie)) 404)))
 
@@ -198,6 +200,7 @@
   (test-case "deny sends the user back with access_denied"
     (define r (deny (authorize!) cookie))
     (check-equal? (resp-status r) 200)
+    (check-equal? (resp-header r "Cache-Control") "no-store")
     (define q (query-of (hash-ref (resp-json r) 'redirect_to)))
     (check-equal? (hash-ref q 'error) "access_denied")
     (check-equal? (hash-ref q 'state) "xyz"))
@@ -242,7 +245,16 @@
     (check-equal? (resp-body r) #"<html>spa</html>")
     (check-equal? (resp-header r "Content-Security-Policy") "frame-ancestors 'none'")
     (check-equal? (resp-header r "Referrer-Policy") "no-referrer")
-    (check-false (resp-header (http "GET" "/login") "Content-Security-Policy")))
+    (define doubled (http "GET" "//connect/x"))
+    (check-equal? (resp-body doubled) #"<html>spa</html>")
+    (check-equal? (resp-header doubled "Content-Security-Policy") "frame-ancestors 'none'")
+    (check-equal? (resp-header doubled "Referrer-Policy") "no-referrer" "an empty first segment does not hide the consent page"))
+
+  (test-case "every SPA page is never framed; only the consent page also drops the referrer"
+    (for ([p '("/login" "/connected-apps" "/decks" "/")])
+      (define r (http "GET" p))
+      (check-equal? (resp-header r "Content-Security-Policy") "frame-ancestors 'none'" p)
+      (check-false (resp-header r "Referrer-Policy") p)))
 
   (test-case "an unknown OAuth path is a JSON 404, not the SPA"
     (check-equal? (code-of (http "GET" "/oauth/nope")) "not_found"))

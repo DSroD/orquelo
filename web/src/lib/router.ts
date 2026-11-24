@@ -56,5 +56,12 @@ export function navigate(path: string) {
 
 /** A same-site path to come back to after login; anything else falls back to /decks. */
 export function safeReturnTo(p: string | null): string {
-  return p && p.startsWith("/") && !p.startsWith("//") ? p : "/decks";
+  // The URL parser silently drops tabs and newlines and reads "\" as "/", so refuse them up front.
+  if (!p || /[\\\t\r\n]|%5c/i.test(p)) return "/decks";
+  try {
+    const u = new URL(p, location.origin);
+    return u.origin === location.origin ? u.pathname + u.search + u.hash : "/decks";
+  } catch {
+    return "/decks";
+  }
 }

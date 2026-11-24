@@ -266,7 +266,8 @@
 ;; OAuthServer String Subject Natural (listof String) -> (or String #f)
 ;; the user approves with the scopes they chose (those not asked for are dropped): the URL to send
 ;; them to, carrying the code, the client's state and `iss`. Each approval creates a new grant.
-;; #f when the request is gone or no scope is left; the request is then left alone.
+;; #f when the request is gone or no scope is left (the request is then left alone), or when its
+;; client is gone (the request is then used up, since it can never be approved).
 (define (approve! srv id subject epoch chosen)
   (define store (oauth-server-store srv))
   (define now (now-of srv))
@@ -277,9 +278,9 @@
      (define asked (store-pending-ref store h now))
      (define scopes (if asked (filter (λ (s) (member s chosen)) (pending-scopes asked)) '()))
      (define p (and (pair? scopes) (store-pending-take! store h now)))
-     (and p
-          (let* ([g (store-grant-create! store subject (pending-client-id p) scopes epoch now)]
-                 [code ((token-format-mint opaque-format))])
+     (define g (and p (store-grant-create! store subject (pending-client-id p) scopes epoch now)))
+     (and g
+          (let ([code ((token-format-mint opaque-format))])
             (store-code-put! store (code-record (hash-token code) (grant-id g) (pending-redirect-uri p)
                                                 (pending-explicit-redirect? p)
                                                 (pending-challenge p) (pending-resource p) scopes (+ now code-ttl)))
@@ -1032,6 +1033,14 @@
                    [token-put! (λ (t) (store-grant-delete! store 7 (token-record-grant-id t)) (store-token-put! store t))]))
     (define srv2 (make-oauth-server app racing opaque-format))
     (check-equal? (error-of (code-exchange srv2 code)) "invalid_grant"))
+
+  (test-case "approving after the client was swept (between authorize and approve) gives #f"
+    (define-values (srv store) (stage!))
+    (define id (pending-id (authorize srv)))
+    (define swept (struct-copy oauth-store store [grant-create! (λ _ #f)]))
+    (define srv2 (make-oauth-server app swept opaque-format))
+    (check-false (approve! srv2 id 7 0 '("decks")))
+    (check-false (approve! srv id 7 0 '("decks")) "the request is used up"))
 
   (test-case "sweeping runs when ten minutes have passed and removes expired state"
     (define-values (srv store) (stage!))

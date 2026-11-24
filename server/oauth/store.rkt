@@ -11,7 +11,7 @@
              [pending-put! (-> pending? void?)]
              [pending-ref (-> bytes? exact-integer? (or/c pending? #f))]
              [pending-take! (-> bytes? exact-integer? (or/c pending? #f))]
-             [grant-create! (-> any/c string? (listof string?) exact-nonnegative-integer? exact-integer? grant?)]
+             [grant-create! (-> any/c string? (listof string?) exact-nonnegative-integer? exact-integer? (or/c grant? #f))]
              [grant-ref (-> string? (or/c grant? #f))]
              [grants-of (-> any/c (listof grant?))]
              [grant-delete! (-> any/c string? boolean?)]
@@ -41,7 +41,8 @@
 ;;   pending-put!           store a pending authorization request
 ;;   pending-ref            by id hash; #f once expired
 ;;   pending-take!          the pending request, removed (single use); #f when absent or expired
-;;   grant-create!          subject, client id, scopes, epoch, now -> a new Grant with a fresh id. Every
+;;   grant-create!          subject, client id, scopes, epoch, now -> a new Grant with a fresh id; #f (and
+;;                          nothing stored) when the client no longer exists, e.g. swept meanwhile. Every
 ;;                          approval is its own grant: nothing is shared with, or replaced by, others
 ;;   grant-ref              by id
 ;;   grants-of              all grants of a subject
@@ -138,9 +139,10 @@
 
   (define (grant-create! subject client-id scopes epoch now)
     (locked
-     (define g (grant (random-base64url 16) subject client-id scopes epoch now #f))
-     (hash-set! grants (grant-id g) g)
-     g))
+     (and (hash-has-key? clients client-id)
+          (let ([g (grant (random-base64url 16) subject client-id scopes epoch now #f)])
+            (hash-set! grants (grant-id g) g)
+            g))))
 
   (define (drop-credentials! gid)
     (for ([table (list codes access refresh)])

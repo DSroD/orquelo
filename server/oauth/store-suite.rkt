@@ -62,6 +62,10 @@
      (store-client-put! st renamed)
      (check-equal? (store-client-ref st (client-id full)) renamed))
 
+   (store-case "a grant needs its client: none is created once the client is gone" (st)
+     (check-false (store-grant-create! st 7 "never-put" '("decks") 3 0))
+     (check-equal? (store-grants-of st 7) '()))
+
    (store-case "pending requests round-trip, expire and are taken once" (st)
      (define p (a-pending "p1"))
      (define bare (struct-copy pending (a-pending "p3") [state #f] [explicit-redirect? #f]))

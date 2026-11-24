@@ -93,11 +93,13 @@
   (match-define (vector id user cid scopes epoch created last-used) r)
   (grant id user cid (strings scopes) epoch created (sql-null->false last-used)))
 
-;; Connection String Integer String PgArray Natural Integer -> Void
-;; inserts a grant (its user and client must exist)
-(define-query (insert-grant! c id user cid scopes epoch created) #:exec
+;; Connection String Integer String PgArray Natural Integer -> Natural
+;; inserts a grant (its user must exist) and says how many rows went in: 0 when the client is gone.
+;; The key share lock keeps a concurrent sweep from deleting the client in between
+(define-query (insert-grant! c id user cid scopes epoch created) #:count
   "INSERT INTO oauth_grants (id, user_id, client_id, scopes, session_epoch, created_at)
-   VALUES ($1, $2, $3, $4::text[], $5, $6)")
+   SELECT $1::text, $2::bigint, client_id, $4::text[], $5::bigint, $6::bigint
+   FROM oauth_clients WHERE client_id=$3::text FOR KEY SHARE")
 
 ;; Connection String -> (or Grant #f)
 ;; the grant with this id
@@ -119,12 +121,12 @@
 (define-query (touch-grant! c id now) #:maybe-row row->grant
   "UPDATE oauth_grants SET last_used_at=$2 WHERE id=$1 RETURNING " grant-cols)
 
-;; Connection Subject String (listof String) Natural Integer -> Grant
-;; a new grant under a random id
+;; Connection Subject String (listof String) Natural Integer -> (or Grant #f)
+;; a new grant under a random id; #f when the client is gone
 (define (create-grant! c user cid scopes epoch now)
   (define id (random-base64url 16))
-  (insert-grant! c id user cid (list->pg-array scopes) epoch now)
-  (grant id user cid scopes epoch now #f))
+  (and (= (insert-grant! c id user cid (list->pg-array scopes) epoch now) 1)
+       (grant id user cid scopes epoch now #f)))
 
 ;; --- codes
 
